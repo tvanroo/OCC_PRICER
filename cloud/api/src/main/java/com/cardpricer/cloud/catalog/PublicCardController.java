@@ -1,0 +1,60 @@
+package com.cardpricer.cloud.catalog;
+
+import com.cardpricer.cloud.web.ApiException;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+/**
+ * The free price check. No account, no payment: Scryfall's terms require its price data to stay free.
+ * Deliberately minimal: card identity and market price only, never a store's buy offers.
+ */
+@RestController
+@RequestMapping("/api/public")
+public class PublicCardController {
+    private final CatalogRepository catalog;
+
+    public PublicCardController(CatalogRepository catalog) {
+        this.catalog = catalog;
+    }
+
+    @GetMapping("/cards")
+    public ResponseEntity<Map<String, Object>> search(@RequestParam("q") String q,
+                                                      @RequestParam(value = "set", defaultValue = "") String set) {
+        if (q.trim().length() < 2) throw ApiException.badRequest("Type at least 2 characters");
+        if (q.length() > 100) throw ApiException.badRequest("Search is too long");
+        List<Map<String, Object>> cards = catalog.search(q, set.trim().toUpperCase(Locale.ROOT), 40).stream()
+                .map(PublicCardController::view).toList();
+        Map<String, Object> body = new HashMap<>();
+        body.put("cards", cards);
+        body.put("pricesUpdatedAt", catalog.lastImport().map(Object::toString).orElse(null));
+        body.put("source", "Scryfall");
+        // Prices change once a day; let browsers and any CDN reuse results.
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic()).body(body);
+    }
+
+    static Map<String, Object> view(CardRow card) {
+        Map<String, Object> view = new HashMap<>();
+        view.put("id", card.id());
+        view.put("name", card.name());
+        view.put("set", card.setCode());
+        view.put("setName", card.setName());
+        view.put("number", card.collectorNumber());
+        view.put("rarity", card.rarity());
+        view.put("lang", card.lang());
+        view.put("image", card.imageSmall());
+        view.put("usd", card.usd());
+        view.put("usdFoil", card.usdFoil());
+        view.put("usdEtched", card.usdEtched());
+        return view;
+    }
+}
