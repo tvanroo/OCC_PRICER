@@ -39,3 +39,6 @@ bin/
 /.idea/artifacts/
 /.idea/modules.xml
 /*.iml
+cloud/api/target/
+cloud/web/node_modules/
+cloud/web/dist/
