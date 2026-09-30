@@ -76,6 +76,20 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void importsGzippedJsonLines() throws Exception {
+        // Scryfall's bulk files are now gzipped JSON Lines; re-importing the fixture that way upserts the same rows.
+        JsonNode cards;
+        try (var in = getClass().getResourceAsStream("/cards-fixture.json")) {
+            cards = json.readTree(in);
+        }
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var gzip = new java.util.zip.GZIPOutputStream(bytes)) {
+            for (JsonNode card : cards) gzip.write((json.writeValueAsString(card) + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        assertEquals(4, importer.importStream(new java.io.ByteArrayInputStream(bytes.toByteArray()), "fixture.jsonl.gz"));
+    }
+
+    @Test
     void freePriceCheckNeedsNoAccountAndShowsOnlyMarketPrices() throws Exception {
         var r = call("GET", "/api/public/cards?q=bolt", null, null);
         assertEquals(200, r.status());

@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
@@ -64,8 +65,10 @@ public class CatalogImporter {
 
     public int importFromScryfall() throws IOException, InterruptedException {
         JsonNode index = mapper.readTree(get(bulkIndexUrl));
-        String download = index.path("download_uri").asText();
-        if (download.isBlank()) throw new IOException("Scryfall bulk index has no download_uri");
+        // Scryfall now publishes gzipped JSON Lines; older indexes only had a JSON array download_uri.
+        String download = index.path("jsonl_download_uri").asText("");
+        if (download.isBlank()) download = index.path("download_uri").asText("");
+        if (download.isBlank()) throw new IOException("Scryfall bulk index has no download URI");
         log.info("Downloading Scryfall bulk data from {}", download);
         try (InputStream in = get(download)) {
             return importStream(in, download);
@@ -81,10 +84,13 @@ public class CatalogImporter {
     public int importStream(InputStream in, String source) throws IOException {
         Long run = jdbc.queryForObject("INSERT INTO catalog_imports (source) VALUES (?) RETURNING id", Long.class, source);
         int count = 0;
-        try (JsonParser parser = mapper.getFactory().createParser(in)) {
-            if (parser.nextToken() != JsonToken.START_ARRAY) throw new IOException("Expected a JSON array of cards");
+        try (JsonParser parser = mapper.getFactory().createParser(ungzip(in))) {
+            // Accepts either a JSON array of cards or JSON Lines (one card object per line).
+            JsonToken token = parser.nextToken();
+            boolean array = token == JsonToken.START_ARRAY;
+            if (array) token = parser.nextToken();
             List<Object[]> batch = new ArrayList<>(BATCH);
-            while (parser.nextToken() == JsonToken.START_OBJECT) {
+            for (; token == JsonToken.START_OBJECT; token = parser.nextToken()) {
                 Object[] row = toRow(mapper.readTree(parser));
                 if (row == null) continue;
                 batch.add(row);
@@ -93,6 +99,9 @@ public class CatalogImporter {
                     count += batch.size();
                     batch.clear();
                 }
+            }
+            if (token != null && !(array && token == JsonToken.END_ARRAY)) {
+                throw new IOException("Expected a JSON array or JSON Lines of cards, found " + token);
             }
             if (!batch.isEmpty()) {
                 jdbc.batchUpdate(UPSERT, batch);
@@ -105,6 +114,15 @@ public class CatalogImporter {
         jdbc.update("UPDATE catalog_imports SET finished_at = now(), cards = ? WHERE id = ?", count, run);
         log.info("Imported {} printings from {}", count, source);
         return count;
+    }
+
+    /** Bulk files are served as application/gzip rather than with Content-Encoding, so sniff the magic bytes. */
+    private static InputStream ungzip(InputStream in) throws IOException {
+        BufferedInputStream buffered = new BufferedInputStream(in, 65536);
+        buffered.mark(2);
+        int b1 = buffered.read(), b2 = buffered.read();
+        buffered.reset();
+        return b1 == 0x1f && b2 == 0x8b ? new GZIPInputStream(buffered, 65536) : buffered;
     }
 
     /** Paper printings only; the store trades physical cards. */
