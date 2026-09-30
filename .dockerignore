@@ -1,0 +1,10 @@
+.git
+.idea
+target
+cloud/api/target
+cloud/web/node_modules
+cloud/web/dist
+lib
+assets
+docs
+test

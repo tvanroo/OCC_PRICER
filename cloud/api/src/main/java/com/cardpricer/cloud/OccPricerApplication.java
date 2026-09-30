@@ -17,7 +17,10 @@ public class OccPricerApplication {
             var context = app.run(args);
             int status = 0;
             try {
-                context.getBean(CatalogImporter.class).importFromScryfall();
+                String file = context.getEnvironment().getProperty("app.catalog.file", "");
+                var importer = context.getBean(CatalogImporter.class);
+                if (file.isBlank()) importer.importFromScryfall();
+                else importer.importFile(java.nio.file.Path.of(file));
             } catch (Exception e) {
                 e.printStackTrace();
                 status = 1;
