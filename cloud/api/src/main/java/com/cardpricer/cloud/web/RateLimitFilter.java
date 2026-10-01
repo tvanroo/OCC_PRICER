@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Per-IP fixed-window limit for anonymous endpoints (free price check and sign-in),
- * so free traffic stays cheap and passwords cannot be brute-forced quickly.
+ * so free traffic stays cheap and sign-in cannot be hammered.
  * In memory per replica; good enough while the API runs one or two replicas.
  */
 @Component
@@ -33,7 +33,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        return !path.startsWith("/api/public/") && !path.startsWith("/api/auth/login") && !path.startsWith("/api/auth/signup");
+        return !path.startsWith("/api/public/") && !path.startsWith("/api/auth/login") && !path.startsWith("/api/auth/callback")
+                && !path.startsWith("/api/auth/signup");
     }
 
     @Override

@@ -4,7 +4,7 @@ The multi-store web version of OCC Pricer, live at **https://cardbox.trading**. 
 and the API; PostgreSQL holds the data.
 
 - **Free price check** at `/`: search a card and see its Scryfall market price. No account, as Scryfall's terms require.
-- **Store workflow** under `/app` (sign-in, 30-day trial): trade entry with store credit, check or split payouts,
+- **Store workflow** under `/app` (CardBox sign-in through Auth0, 30-day trial): trade entry with store credit, check or split payouts,
   customers linked by phone number, trade history, tiered buy rates, staff accounts, and the 19-column receiving POS CSV.
 
 Pricing, condition multipliers, settlement and the POS CSV come from the desktop app's own classes
@@ -27,6 +27,7 @@ so web and desktop produce the same offers and cent allocations.
 docker run -d --name occpg -e POSTGRES_USER=occ -e POSTGRES_PASSWORD=occ -e POSTGRES_DB=occ -p 5432:5432 postgres:17-alpine
 cd cloud/api
 export APP_SESSION_SECRET=dev-secret-dev-secret-dev-secret-012345 APP_SECURE_COOKIE=false
+export AUTH0_DOMAIN=dev-tnnibhkgdbepzjy1.us.auth0.com AUTH0_CLIENT_ID=i8rRy5TlNKCvd4tMFWOqMkJRY1PhCPvq AUTH0_CLIENT_SECRET=<its secret>
 mvn -DskipTests package
 java -jar target/occ-pricer-cloud.jar import-catalog            # downloads Scryfall bulk data (~500 MB)
 java -jar target/occ-pricer-cloud.jar                           # API on :8080
@@ -55,6 +56,43 @@ Deploy or update (idempotent):
 az login --use-device-code --tenant b5a8b81b-a80c-4aaa-b3cc-2e54736c0fe4
 cloud/deploy.sh
 ```
+
+### Sign-in (Auth0)
+
+Store sign-in uses Auth0 Universal Login in the same Auth0 tenant as cardbox.club, so a person has one CardBox login
+for both sites. cardbox.trading has its own Auth0 application, **CardBox Trading** (Regular Web Application), so its
+client id (`i8rRy5TlNKCvd4tMFWOqMkJRY1PhCPvq`) and secret can be rotated or switched off without touching cardbox.club. It has the same connections as the CardBox application (Username-Password and Google).
+
+| Setting | Value |
+|---|---|
+| Allowed Callback URLs | `https://cardbox.trading/api/auth/callback`, `https://www.cardbox.trading/api/auth/callback`, `http://localhost:5173/api/auth/callback`, `http://localhost:8080/api/auth/callback` |
+| Allowed Logout URLs | `https://cardbox.trading/`, `https://www.cardbox.trading/`, `http://localhost:5173/`, `http://localhost:8080/` |
+| Allowed Web Origins | `https://cardbox.trading`, `https://www.cardbox.trading` |
+| Grant types | Authorization Code (with PKCE), no refresh tokens |
+| Connections | The same ones the CardBox application uses |
+
+How the app treats a sign-in (`api/.../auth/AuthController.java`):
+
+- Authorization Code + PKCE with scope `openid email profile`; `state` and `nonce` are checked, and the ID token is
+  validated against the tenant's keys, issuer and client id.
+- Only verified emails are accepted.
+- Users are keyed on the Auth0 user id (`users.auth0_sub`), the same id cardbox.club stores. The first sign-in falls
+  back to the verified email, which is how accounts made before Auth0 and staff an owner added by email get linked.
+- Someone with no account yet is asked to name their store, which starts its trial with them as owner.
+- Sign-out clears the app's session and then Auth0's (`/v2/logout`).
+- The platform owner is the verified `OWNER_EMAIL` (`toby@vanroojen.com`), reported as `admin` by `/api/auth/me`.
+  It is separate from owning a store.
+
+Settings: `AUTH0_DOMAIN` and `AUTH0_CLIENT_ID` are Bicep parameters (`auth0Domain`, `auth0ClientId`); the client secret
+is the Key Vault secret `auth0-client-secret`, which `deploy.sh` requires and never generates:
+
+```sh
+auth0 apps show <client id> --reveal-secrets --json | jq -r .client_secret \
+  | az keyvault secret set --vault-name <vault> -n auth0-client-secret --file /dev/stdin -o none
+```
+
+If Universal Login later moves to a shared custom domain such as `login.cardbox.club`, set `auth0Domain` to it here
+and on cardbox.club, and signing in on one site signs you in on the other.
 
 ### Domain
 
@@ -89,6 +127,6 @@ Because the app scales to zero, the first request after an idle period waits for
 
 ## Not in the MVP yet
 
-Stripe billing (trials are tracked, and an ended trial locks the store workflow), Entra External ID sign-in,
+Stripe billing (trials are tracked, and an ended trial locks the store workflow),
 PostgreSQL row-level security (tenant isolation is enforced in every query and covered by a test),
 bounties, trade editing and deletion, receipts as PDF, and importing a store's desktop history.

@@ -51,6 +51,11 @@ ensure_secret() {
 }
 ensure_secret postgres-password
 ensure_secret session-secret
+# The Auth0 client secret comes from the "CardBox Trading" application, so it is set by hand, never generated.
+if ! az keyvault secret show --vault-name "$VAULT" -n auth0-client-secret --query id -o tsv >/dev/null 2>&1; then
+  echo "Key Vault $VAULT has no auth0-client-secret. Set it from the CardBox Trading Auth0 application (see cloud/README.md)." >&2
+  exit 1
+fi
 PG_PASSWORD=$(az keyvault secret show --vault-name "$VAULT" -n postgres-password --query value -o tsv)
 
 echo "== Building image $SERVER/occ-pricer:$TAG in Azure"

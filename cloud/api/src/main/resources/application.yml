@@ -19,5 +19,12 @@ management:
 app:
   session-secret: ${APP_SESSION_SECRET}
   secure-cookie: ${APP_SECURE_COOKIE:true}
+  # Auth0 Universal Login, in the same tenant as cardbox.club. AUTH0_DOMAIN may be the tenant domain or its custom login domain.
+  auth0:
+    domain: ${AUTH0_DOMAIN:}
+    client-id: ${AUTH0_CLIENT_ID:}
+    client-secret: ${AUTH0_CLIENT_SECRET:}
+  # Platform owner. Only counts once Auth0 has verified the address.
+  owner-email: ${OWNER_EMAIL:toby@vanroojen.com}
   trial-days: 30
   catalog.user-agent: OCCPricerCloud/0.1 (+https://github.com/tvanroo/OCC_PRICER)

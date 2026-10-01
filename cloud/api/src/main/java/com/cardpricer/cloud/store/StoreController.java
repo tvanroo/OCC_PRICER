@@ -12,7 +12,6 @@ import jakarta.validation.constraints.Size;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -27,10 +26,9 @@ import java.util.UUID;
 public class StoreController {
     public record Rule(@NotNull BigDecimal thresholdMin, @NotNull BigDecimal creditRate, @NotNull BigDecimal checkRate) {}
     public record RatesBody(@NotNull @Size(min = 1, max = 20) List<@Valid Rule> rules) {}
-    public record StaffBody(@NotBlank @Size(max = 120) String name, @NotBlank @Email String email,
-                            @NotBlank @Size(min = 10, max = 200) String password) {}
+    /** Staff sign in through Auth0 with this email; their account links on their first sign-in. */
+    public record StaffBody(@NotBlank @Size(max = 120) String name, @NotBlank @Email String email) {}
 
-    private static final BCryptPasswordEncoder PASSWORDS = new BCryptPasswordEncoder();
     private final RateRepository rates;
     private final JdbcTemplate jdbc;
 
@@ -70,9 +68,8 @@ public class StoreController {
     public List<Map<String, Object>> addStaff(@Valid @RequestBody StaffBody body, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
         try {
-            jdbc.update("INSERT INTO users (id, tenant_id, email, name, password_hash, role) VALUES (?, ?, ?, ?, ?, 'staff')",
-                    UUID.randomUUID(), user.tenantId(), body.email().trim().toLowerCase(), body.name().trim(),
-                    PASSWORDS.encode(body.password()));
+            jdbc.update("INSERT INTO users (id, tenant_id, email, name, role) VALUES (?, ?, ?, ?, 'staff')",
+                    UUID.randomUUID(), user.tenantId(), body.email().trim().toLowerCase(), body.name().trim());
         } catch (DuplicateKeyException e) {
             throw new ApiException(HttpStatus.CONFLICT, "An account with that email already exists");
         }

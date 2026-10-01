@@ -16,8 +16,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Public me={me}><PriceCheck /></Public>} />
-      <Route path="/login" element={<Public me={me}><Login onDone={refresh} /></Public>} />
-      <Route path="/signup" element={<Public me={me}><Signup onDone={refresh} /></Public>} />
+      <Route path="/login" element={me ? <Navigate to="/app" replace /> : <Public me={me}><Login /></Public>} />
+      <Route path="/signup" element={me ? <Navigate to="/app" replace /> : <Public me={me}><Signup onDone={refresh} /></Public>} />
       <Route path="/app/*" element={
         me === undefined ? <p className="page">Loading…</p>
           : me === null ? <Navigate to="/login" replace />
@@ -34,7 +34,7 @@ function Public({ me, children }: { me: Me | null | undefined; children: React.R
       <header className="topbar">
         <Link to="/" className="brand">OCC Pricer</Link>
         <nav>
-          {me ? <Link to="/app">Open {me.store}</Link> : <><Link to="/login">Store sign in</Link><Link to="/signup" className="button small">Start free trial</Link></>}
+          {me ? <Link to="/app">Open {me.store}</Link> : <><a href="/api/auth/login">Store sign in</a><Link to="/signup" className="button small">Start free trial</Link></>}
         </nav>
       </header>
       <main className="page">{children}</main>
@@ -46,10 +46,15 @@ function Public({ me, children }: { me: Me | null | undefined; children: React.R
   )
 }
 
+/** Clears our session, then ends the Auth0 session too so the next sign-in asks again. */
 export function useSignOut(onSignOut: () => Promise<void>) {
   const navigate = useNavigate()
   return async () => {
-    try { await api('/api/auth/logout', { method: 'POST', body: {} }) } catch (e) { if (!(e instanceof ApiError)) throw e }
+    try {
+      const { logoutUrl } = await api<{ logoutUrl: string }>('/api/auth/logout', { method: 'POST', body: {} })
+      window.location.assign(logoutUrl)
+      return
+    } catch (e) { if (!(e instanceof ApiError)) throw e }
     await onSignOut()
     navigate('/')
   }

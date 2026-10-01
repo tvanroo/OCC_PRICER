@@ -18,6 +18,15 @@ param image string = ''
 @description('Public hostnames for the app. Each gets a free Azure-managed certificate; DNS must already point here (see cloud/README.md).')
 param customDomains array = ['cardbox.trading', 'www.cardbox.trading']
 
+@description('Auth0 domain for Universal Login: the CardBox tenant shared with cardbox.club, or its custom login domain.')
+param auth0Domain string = 'dev-tnnibhkgdbepzjy1.us.auth0.com'
+
+@description('Client id of the "CardBox Trading" Auth0 application. Its secret is the vault secret auth0-client-secret.')
+param auth0ClientId string = 'i8rRy5TlNKCvd4tMFWOqMkJRY1PhCPvq'
+
+@description('Verified email of the platform owner.')
+param ownerEmail string = 'toby@vanroojen.com'
+
 @secure()
 @description('PostgreSQL administrator password (read from Key Vault by deploy.sh).')
 param postgresPassword string = ''
@@ -167,6 +176,16 @@ var env = [
   { name: 'DATABASE_PASSWORD', secretRef: 'db-password' }
   { name: 'APP_SESSION_SECRET', secretRef: 'session-secret' }
 ]
+// Sign-in settings only the web app needs, not the catalog import job.
+var webSecrets = concat(secrets, [
+  { name: 'auth0-client-secret', keyVaultUrl: '${vault.properties.vaultUri}secrets/auth0-client-secret', identity: identity.id }
+])
+var webEnv = concat(env, [
+  { name: 'AUTH0_DOMAIN', value: auth0Domain }
+  { name: 'AUTH0_CLIENT_ID', value: auth0ClientId }
+  { name: 'AUTH0_CLIENT_SECRET', secretRef: 'auth0-client-secret' }
+  { name: 'OWNER_EMAIL', value: ownerEmail }
+])
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
   name: '${prefix}-app'
@@ -188,7 +207,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
         }]
       }
       registries: [{ server: registry.properties.loginServer, identity: identity.id }]
-      secrets: secrets
+      secrets: webSecrets
     }
     template: {
       containers: [
@@ -196,7 +215,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
           name: 'app'
           image: image
           resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: env
+          env: webEnv
           probes: [
             { type: 'Startup', httpGet: { path: '/actuator/health/liveness', port: 8080 }, periodSeconds: 3, failureThreshold: 40 }
             { type: 'Liveness', httpGet: { path: '/actuator/health/liveness', port: 8080 }, periodSeconds: 30 }
