@@ -2,6 +2,8 @@
 
 Java 25 / Swing desktop card pricing, receiving, inventory and trade history.
 
+The multi-store web version runs at **https://cardbox.trading**; see [cloud/README.md](cloud/README.md).
+
 ## Appearance
 
 The refreshed interface uses **OCC Midnight**: charcoal surfaces, subtle blue accents, a persistent sidebar, and clearer trade totals. The overview opens the existing trade, set pricing, inventory and history workflows.

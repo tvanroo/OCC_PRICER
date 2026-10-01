@@ -15,6 +15,9 @@ param deployApps bool = false
 @description('Full image reference, e.g. occpricerabc.azurecr.io/occ-pricer:20260930-1.')
 param image string = ''
 
+@description('Public hostnames for the app. Each gets a free Azure-managed certificate; DNS must already point here (see cloud/README.md).')
+param customDomains array = ['cardbox.trading', 'www.cardbox.trading']
+
 @secure()
 @description('PostgreSQL administrator password (read from Key Vault by deploy.sh).')
 param postgresPassword string = ''
@@ -141,6 +144,19 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
+// Apex domains validate over HTTP (A record to the environment IP); subdomains validate through their CNAME.
+// A managed certificate can only be issued once the hostname is on the app, so the very first binding is done
+// with the Azure CLI (cloud/README.md); later deployments find the certificates in place and keep them.
+resource certificates 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = [for domain in customDomains: if (deployApps) {
+  parent: environment
+  name: replace(domain, '.', '-')
+  location: location
+  properties: {
+    subjectName: domain
+    domainControlValidation: length(split(domain, '.')) > 2 ? 'CNAME' : 'HTTP'
+  }
+}]
+
 var secrets = [
   { name: 'db-password', keyVaultUrl: '${vault.properties.vaultUri}secrets/postgres-password', identity: identity.id }
   { name: 'session-secret', keyVaultUrl: '${vault.properties.vaultUri}secrets/session-secret', identity: identity.id }
@@ -160,7 +176,17 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
     environmentId: environment.id
     workloadProfileName: 'Consumption'
     configuration: {
-      ingress: { external: true, targetPort: 8080, transport: 'auto', allowInsecure: false }
+      ingress: {
+        external: true
+        targetPort: 8080
+        transport: 'auto'
+        allowInsecure: false
+        customDomains: [for domain in customDomains: {
+          name: domain
+          bindingType: 'SniEnabled'
+          certificateId: '${environment.id}/managedCertificates/${replace(domain, '.', '-')}'
+        }]
+      }
       registries: [{ server: registry.properties.loginServer, identity: identity.id }]
       secrets: secrets
     }
@@ -182,7 +208,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
       scale: { minReplicas: 0, maxReplicas: 1, rules: [{ name: 'http', http: { metadata: { concurrentRequests: '50' } } }] }
     }
   }
-  dependsOn: [appPull, appSecrets, database]
+  dependsOn: [appPull, appSecrets, database, certificates]
 }
 
 resource importJob 'Microsoft.App/jobs@2024-03-01' = if (deployApps) {
@@ -218,5 +244,5 @@ resource importJob 'Microsoft.App/jobs@2024-03-01' = if (deployApps) {
 output registryName string = registry.name
 output registryServer string = registry.properties.loginServer
 output vaultName string = vault.name
-output appUrl string = deployApps ? 'https://${app.?properties.configuration.ingress.fqdn ?? ''}' : ''
+output appUrl string = deployApps ? 'https://${empty(customDomains) ? app.?properties.configuration.ingress.fqdn ?? '' : customDomains[0]}' : ''
 output importJobName string = deployApps ? importJob.name : ''
