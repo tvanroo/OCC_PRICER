@@ -12,12 +12,24 @@ TAG="${IMAGE_TAG:-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 INFRA="$ROOT/cloud/infra/main.bicep"
 
+# In a cloud session, sign in as a service principal from environment variables when they are set.
+if [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_CLIENT_SECRET:-}" ] && ! az account show >/dev/null 2>&1; then
+  az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$TENANT" -o none
+fi
 az account set --subscription "$SUBSCRIPTION"
 [ "$(az account show --query tenantId -o tsv)" = "$TENANT" ] || { echo "Signed in to the wrong tenant" >&2; exit 1; }
 for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.DBforPostgreSQL Microsoft.KeyVault Microsoft.OperationalInsights Microsoft.ManagedIdentity; do
+  # Registering needs subscription-level rights, so skip namespaces that are already registered.
+  [ "$(az provider show --namespace "$ns" --query registrationState -o tsv)" = Registered ] && continue
   az provider register --namespace "$ns" --wait >/dev/null
 done
-DEPLOYER="$(az ad signed-in-user show --query id -o tsv)"
+if [ -n "${DEPLOYER_OBJECT_ID:-}" ]; then
+  DEPLOYER="$DEPLOYER_OBJECT_ID"
+elif [ "$(az account show --query user.type -o tsv)" = servicePrincipal ]; then
+  DEPLOYER="$(az ad sp show --id "$(az account show --query user.name -o tsv)" --query id -o tsv)"
+else
+  DEPLOYER="$(az ad signed-in-user show --query id -o tsv)"
+fi
 
 echo "== Stage 1: registry, vault, container environment"
 out=$(az deployment group create -g "$GROUP" -n "${PREFIX}-base" -f "$INFRA" \

@@ -76,6 +76,20 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void importsGzippedJsonLines() throws Exception {
+        // Scryfall's bulk files are now gzipped JSON Lines; re-importing the fixture that way upserts the same rows.
+        JsonNode cards;
+        try (var in = getClass().getResourceAsStream("/cards-fixture.json")) {
+            cards = json.readTree(in);
+        }
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var gzip = new java.util.zip.GZIPOutputStream(bytes)) {
+            for (JsonNode card : cards) gzip.write((json.writeValueAsString(card) + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        assertEquals(4, importer.importStream(new java.io.ByteArrayInputStream(bytes.toByteArray()), "fixture.jsonl.gz"));
+    }
+
+    @Test
     void freePriceCheckNeedsNoAccountAndShowsOnlyMarketPrices() throws Exception {
         var r = call("GET", "/api/public/cards?q=bolt", null, null);
         assertEquals(200, r.status());
@@ -85,6 +99,20 @@ class CloudApiIntegrationTest {
         assertEquals("2X2", cards.get(0).path("set").asText(), "newest printing first");
         assertEquals("1.37", cards.get(0).path("usd").asText());
         assertFalse(cards.get(0).has("credit"), "no store offers on the free page");
+    }
+
+    @Test
+    void searchMatchesSetCodeAndCollectorNumber() throws Exception {
+        for (String q : new String[]{"410", "CMM 410", "cmm 410", "cmm #410", "sol cmm", "ring 410"}) {
+            var cards = call("GET", "/api/public/cards?q=" + java.net.URLEncoder.encode(q, java.nio.charset.StandardCharsets.UTF_8), null, null)
+                    .body().path("cards");
+            assertEquals(1, cards.size(), q);
+            assertEquals("Sol Ring", cards.get(0).path("name").asText(), q);
+        }
+        var bolt = call("GET", "/api/public/cards?q=bolt%202x2", null, null).body().path("cards");
+        assertEquals(1, bolt.size());
+        assertEquals("117", bolt.get(0).path("number").asText());
+        assertEquals(0, call("GET", "/api/public/cards?q=cmm%20117", null, null).body().path("cards").size());
     }
 
     @Test
