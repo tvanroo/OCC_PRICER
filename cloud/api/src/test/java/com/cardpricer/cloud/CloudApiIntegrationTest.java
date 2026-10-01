@@ -102,6 +102,20 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void searchMatchesSetCodeAndCollectorNumber() throws Exception {
+        for (String q : new String[]{"410", "CMM 410", "cmm 410", "cmm #410", "sol cmm", "ring 410"}) {
+            var cards = call("GET", "/api/public/cards?q=" + java.net.URLEncoder.encode(q, java.nio.charset.StandardCharsets.UTF_8), null, null)
+                    .body().path("cards");
+            assertEquals(1, cards.size(), q);
+            assertEquals("Sol Ring", cards.get(0).path("name").asText(), q);
+        }
+        var bolt = call("GET", "/api/public/cards?q=bolt%202x2", null, null).body().path("cards");
+        assertEquals(1, bolt.size());
+        assertEquals("117", bolt.get(0).path("number").asText());
+        assertEquals(0, call("GET", "/api/public/cards?q=cmm%20117", null, null).body().path("cards").size());
+    }
+
+    @Test
     void storeWorkflowRequiresSignIn() throws Exception {
         assertEquals(401, call("GET", "/api/app/trades", null, null).status());
         assertEquals(401, call("GET", "/api/app/rates", "occ_session=forged.123.abc", null).status());

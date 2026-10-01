@@ -23,7 +23,7 @@ export default function PriceCheck() {
     <section>
       <h1>Magic card price check</h1>
       <p className="muted">Search any card to see today's market price.</p>
-      <input className="search" autoFocus placeholder="Card name, e.g. Lightning Bolt" value={query}
+      <input className="search" autoFocus placeholder="Card name, set or number, e.g. Lightning Bolt or DMU 391" value={query}
              onChange={e => setQuery(e.target.value)} aria-label="Card name" />
       {error && <p className="error">{error}</p>}
       {result && (
