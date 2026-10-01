@@ -167,6 +167,7 @@ class CloudApiIntegrationTest {
         assertEquals(302, start.status(), start.raw());
         assertTrue(start.location().startsWith(issuer() + "authorize?"), start.location());
         assertEquals("S256", query(start.location(), "code_challenge_method"));
+        assertNull(query(start.location(), "prompt"));
         String code = UUID.randomUUID().toString();
         CODES.put(code, Map.of("sub", sub, "email", email, "email_verified", verified, "name", email,
                 "nonce", query(start.location(), "nonce")));
@@ -342,6 +343,12 @@ class CloudApiIntegrationTest {
         assertEquals(404, call("POST", "/api/auth/signup", null, Map.of("storeName", "X", "name", "Y")).status());
         // A sign-in transaction cookie is not a session.
         assertEquals(401, call("GET", "/api/app/rates", "occ_session=" + start.cookie().split("=", 2)[1], null).status());
+    }
+
+    @Test
+    void chooseAccountAsksAuth0ForCredentialsAgain() throws Exception {
+        var start = call("GET", "/api/auth/login?chooseAccount=true", null, null);
+        assertEquals("login", query(start.location(), "prompt"));
     }
 
     @Test

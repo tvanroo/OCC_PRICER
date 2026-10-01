@@ -61,7 +61,8 @@ public class Auth0Client {
         return !issuer.isBlank() && !clientId.isBlank() && !clientSecret.isBlank();
     }
 
-    public String authorizeUrl(String redirectUri, String state, String nonce, String codeChallenge, boolean signup) {
+    public String authorizeUrl(String redirectUri, String state, String nonce, String codeChallenge,
+                               boolean signup, boolean chooseAccount) {
         var params = new LinkedHashMap<String, String>();
         params.put("response_type", "code");
         params.put("client_id", clientId);
@@ -72,6 +73,8 @@ public class Auth0Client {
         params.put("code_challenge", codeChallenge);
         params.put("code_challenge_method", "S256");
         if (signup) params.put("screen_hint", "signup");
+        // Ask for credentials even if Auth0 still has a session, so a different account can be used.
+        if (chooseAccount) params.put("prompt", "login");
         return issuer + "authorize?" + form(params);
     }
 
