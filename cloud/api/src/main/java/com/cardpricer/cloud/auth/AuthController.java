@@ -67,14 +67,18 @@ public class AuthController {
         this.ownerEmail = ownerEmail.trim();
     }
 
-    /** Starts Universal Login; {@code signup=true} opens Auth0's sign-up screen instead of sign-in. */
+    /**
+     * Starts Universal Login; {@code signup=true} opens Auth0's sign-up screen instead of sign-in, and
+     * {@code chooseAccount=true} asks for credentials even when Auth0 remembers an earlier sign-in.
+     */
     @GetMapping("/login")
-    public void login(@RequestParam(defaultValue = "false") boolean signup, HttpServletResponse response) throws IOException {
+    public void login(@RequestParam(defaultValue = "false") boolean signup,
+                      @RequestParam(defaultValue = "false") boolean chooseAccount, HttpServletResponse response) throws IOException {
         if (!auth0.configured()) throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "Sign-in is not configured");
         String state = random(), nonce = random(), verifier = random();
         setCookie(response, TRANSACTION_COOKIE, tokens.seal(TRANSACTION, String.join(" ", state, nonce, verifier), Duration.ofMinutes(10)),
                 Duration.ofMinutes(10), "/api/auth");
-        response.sendRedirect(auth0.authorizeUrl(url("/api/auth/callback"), state, nonce, challenge(verifier), signup));
+        response.sendRedirect(auth0.authorizeUrl(url("/api/auth/callback"), state, nonce, challenge(verifier), signup, chooseAccount));
     }
 
     @GetMapping("/callback")

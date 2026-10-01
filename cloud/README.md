@@ -69,6 +69,7 @@ client id (`i8rRy5TlNKCvd4tMFWOqMkJRY1PhCPvq`) and secret can be rotated or swit
 | Allowed Logout URLs | `https://cardbox.trading/`, `https://www.cardbox.trading/`, `http://localhost:5173/`, `http://localhost:8080/` |
 | Allowed Web Origins | `https://cardbox.trading`, `https://www.cardbox.trading` |
 | Grant types | Authorization Code (with PKCE), no refresh tokens |
+| ID token signing | RS256 (Advanced Settings > OAuth). Apps created through the Management API default to HS256, which the app rejects |
 | Connections | The same ones the CardBox application uses |
 
 How the app treats a sign-in (`api/.../auth/AuthController.java`):

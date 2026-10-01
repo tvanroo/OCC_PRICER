@@ -5,6 +5,7 @@ import { api, ApiError } from '../api'
 // Sign-in is a full-page redirect to Auth0 Universal Login, so these are plain links, not fetches.
 const SIGN_IN = '/api/auth/login'
 const SIGN_UP = '/api/auth/login?signup=true'
+const OTHER_ACCOUNT = '/api/auth/login?chooseAccount=true'
 
 export function Login() {
   const [params] = useSearchParams()
@@ -15,6 +16,7 @@ export function Login() {
       <p className="muted">You sign in with your CardBox login, the same one you use on cardbox.club.</p>
       {error && <p className="error">{error}</p>}
       <a className="button" href={SIGN_IN}>Sign in</a>
+      <p className="muted"><a href={OTHER_ACCOUNT}>Use a different account</a></p>
       <p className="muted">New store? <a href={SIGN_UP}>Start a free trial</a></p>
     </div>
   )
