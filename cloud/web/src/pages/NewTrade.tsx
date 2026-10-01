@@ -18,6 +18,7 @@ let nextKey = 1
 export default function NewTrade() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Card[]>([])
+  const [noMatch, setNoMatch] = useState(false)
   const [lines, setLines] = useState<Line[]>([])
   const [payment, setPayment] = useState<'credit' | 'check' | 'partial'>('credit')
   const [splitCredit, setSplitCredit] = useState('')
@@ -29,9 +30,9 @@ export default function NewTrade() {
   const [saved, setSaved] = useState<Saved | null>(null)
 
   useEffect(() => {
-    if (query.trim().length < 2) { setResults([]); return }
+    if (query.trim().length < 2) { setResults([]); setNoMatch(false); return }
     const timer = setTimeout(() => {
-      api<Card[]>(`/api/app/cards?q=${encodeURIComponent(query.trim())}`).then(setResults).catch(e => setError(e.message))
+      api<Card[]>(`/api/app/cards?q=${encodeURIComponent(query.trim())}`).then(r => { setResults(r); setNoMatch(r.length === 0) }).catch(e => setError(e.message))
     }, 250)
     return () => clearTimeout(timer)
   }, [query])
@@ -61,6 +62,7 @@ export default function NewTrade() {
     setLines([...lines, { key: nextKey++, card, finish, condition: 'NM', quantity: 1 }])
     setQuery('')
     setResults([])
+    setNoMatch(false)
     setSaved(null)
   }
   const update = (key: number, change: Partial<Line>) => setLines(lines.map(l => l.key === key ? { ...l, ...change } : l))
@@ -86,7 +88,8 @@ export default function NewTrade() {
         </div>
       )}
       <div className="picker">
-        <input className="search" placeholder="Add a card by name" value={query} onChange={e => setQuery(e.target.value)} />
+        <input className="search" placeholder="Add a card by name, set or number, e.g. DMU 391" value={query} onChange={e => setQuery(e.target.value)} />
+        {noMatch && query.trim().length >= 2 && <p className="muted">No cards found.</p>}
         {results.length > 0 && (
           <ul className="results">
             {results.map(card => (
