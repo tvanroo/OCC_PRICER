@@ -1,36 +1,36 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { api } from '../api'
+import { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { api, ApiError } from '../api'
 
-export function Login({ onDone }: { onDone: () => Promise<void> }) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const navigate = useNavigate()
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    try {
-      await api('/api/auth/login', { method: 'POST', body: { email, password } })
-      await onDone()
-      navigate('/app')
-    } catch (err) { setError((err as Error).message) }
-  }
+// Sign-in is a full-page redirect to Auth0 Universal Login, so these are plain links, not fetches.
+const SIGN_IN = '/api/auth/login'
+const SIGN_UP = '/api/auth/login?signup=true'
+
+export function Login() {
+  const [params] = useSearchParams()
+  const error = params.get('error')
   return (
-    <form className="panel narrow" onSubmit={submit}>
+    <div className="panel narrow">
       <h1>Store sign in</h1>
-      <label>Email<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
-      <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
+      <p className="muted">You sign in with your CardBox login, the same one you use on cardbox.club.</p>
       {error && <p className="error">{error}</p>}
-      <button type="submit">Sign in</button>
-      <p className="muted">New store? <Link to="/signup">Start a free trial</Link></p>
-    </form>
+      <a className="button" href={SIGN_IN}>Sign in</a>
+      <p className="muted">New store? <a href={SIGN_UP}>Start a free trial</a></p>
+    </div>
   )
 }
 
+/** After Auth0 sign-up (or a first sign-in with no store yet): name the store to start its trial. */
 export function Signup({ onDone }: { onDone: () => Promise<void> }) {
-  const [form, setForm] = useState({ storeName: '', name: '', email: '', password: '' })
+  const [pending, setPending] = useState<{ email: string } | null | undefined>(undefined)
+  const [form, setForm] = useState({ storeName: '', name: '' })
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  useEffect(() => {
+    api<{ email: string; name: string }>('/api/auth/pending')
+      .then(p => { setPending(p); setForm(f => ({ ...f, name: p.name })) })
+      .catch(e => { if (e instanceof ApiError && e.status === 404) setPending(null); else setError(e.message) })
+  }, [])
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [key]: e.target.value })
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -40,14 +40,21 @@ export function Signup({ onDone }: { onDone: () => Promise<void> }) {
       navigate('/app')
     } catch (err) { setError((err as Error).message) }
   }
-  return (
-    <form className="panel narrow" onSubmit={submit}>
+  if (pending === undefined) return <p>{error || 'Loading…'}</p>
+  if (pending === null) return (
+    <div className="panel narrow">
       <h1>Start your store's free trial</h1>
       <p className="muted">30 days free. Trade-ins, payouts, history and POS exports for your whole staff.</p>
+      <a className="button" href={SIGN_UP}>Create your login</a>
+      <p className="muted">Already have a CardBox login? <a href={SIGN_IN}>Sign in</a></p>
+    </div>
+  )
+  return (
+    <form className="panel narrow" onSubmit={submit}>
+      <h1>Name your store</h1>
+      <p className="muted">Signed in as {pending.email}. Your 30-day free trial starts now.</p>
       <label>Store name<input required value={form.storeName} onChange={set('storeName')} /></label>
       <label>Your name<input required autoComplete="name" value={form.name} onChange={set('name')} /></label>
-      <label>Email<input type="email" required autoComplete="email" value={form.email} onChange={set('email')} /></label>
-      <label>Password (10+ characters)<input type="password" required minLength={10} autoComplete="new-password" value={form.password} onChange={set('password')} /></label>
       {error && <p className="error">{error}</p>}
       <button type="submit">Create store</button>
     </form>

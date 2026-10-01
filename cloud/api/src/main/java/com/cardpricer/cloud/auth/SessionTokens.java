@@ -15,12 +15,13 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Stateless HMAC-signed session tokens: {@code userId.expiryEpochSeconds.signature}.
- * Replaced by Entra External ID sign-in in a later phase.
+ * Stateless HMAC-signed tokens: {@code base64url(payload).expiryEpochSeconds.signature}. The signature also covers a
+ * purpose, so a sign-in transaction or pending-signup token can never be replayed as a session.
  */
 @Component
 public class SessionTokens {
     public static final Duration LIFETIME = Duration.ofHours(12);
+    private static final String SESSION = "session";
     private final byte[] key;
 
     public SessionTokens(@Value("${app.session-secret}") String secret) {
@@ -30,22 +31,35 @@ public class SessionTokens {
     }
 
     public String issue(UUID userId) {
-        String payload = userId + "." + Instant.now().plus(LIFETIME).getEpochSecond();
-        return payload + "." + sign(payload);
+        return seal(SESSION, userId.toString(), LIFETIME);
     }
 
     public Optional<UUID> verify(String token) {
+        try {
+            return open(SESSION, token).map(UUID::fromString);
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
+    public String seal(String purpose, String payload, Duration lifetime) {
+        String body = Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8))
+                + "." + Instant.now().plus(lifetime).getEpochSecond();
+        return body + "." + sign(purpose + "|" + body);
+    }
+
+    public Optional<String> open(String purpose, String token) {
         if (token == null) return Optional.empty();
         int last = token.lastIndexOf('.');
         if (last < 0) return Optional.empty();
-        String payload = token.substring(0, last);
-        byte[] expected = sign(payload).getBytes(StandardCharsets.US_ASCII);
+        String body = token.substring(0, last);
+        byte[] expected = sign(purpose + "|" + body).getBytes(StandardCharsets.US_ASCII);
         if (!MessageDigest.isEqual(expected, token.substring(last + 1).getBytes(StandardCharsets.US_ASCII)))
             return Optional.empty();
-        String[] parts = payload.split("\\.");
+        String[] parts = body.split("\\.");
         try {
             if (parts.length != 2 || Instant.now().getEpochSecond() > Long.parseLong(parts[1])) return Optional.empty();
-            return Optional.of(UUID.fromString(parts[0]));
+            return Optional.of(new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8));
         } catch (IllegalArgumentException e) {
             return Optional.empty();
         }

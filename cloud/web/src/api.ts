@@ -17,6 +17,8 @@ export interface Me {
   name: string
   email: string
   role: 'owner' | 'staff'
+  /** Platform owner (verified OWNER_EMAIL), separate from owning a store. */
+  admin: boolean
   store: string
   planStatus: string
   trialEndsAt: string

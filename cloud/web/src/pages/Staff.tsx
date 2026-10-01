@@ -5,14 +5,14 @@ interface Member { id: string; name: string; email: string; role: string }
 
 export default function Staff({ me }: { me: Me }) {
   const [staff, setStaff] = useState<Member[]>([])
-  const [form, setForm] = useState({ name: '', email: '', password: '' })
+  const [form, setForm] = useState({ name: '', email: '' })
   const [error, setError] = useState('')
   useEffect(() => { api<Member[]>('/api/app/staff').then(setStaff).catch(e => setError(e.message)) }, [])
   async function add(e: React.FormEvent) {
     e.preventDefault()
     try {
       setStaff(await api<Member[]>('/api/app/staff', { method: 'POST', body: form }))
-      setForm({ name: '', email: '', password: '' }); setError('')
+      setForm({ name: '', email: '' }); setError('')
     } catch (err) { setError((err as Error).message) }
   }
   return (
@@ -27,8 +27,7 @@ export default function Staff({ me }: { me: Me }) {
           <h2>Add a staff account</h2>
           <label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
           <label>Email<input type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
-          <label>Temporary password (10+ characters)<input type="password" required minLength={10} autoComplete="new-password"
-            value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label>
+          <p className="muted">They sign in with their own CardBox login using this email, and join your store the first time they do.</p>
           <button type="submit">Add staff</button>
         </form>
       )}

@@ -3,6 +3,15 @@ package com.cardpricer.cloud;
 import com.cardpricer.cloud.catalog.CatalogImporter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.RSASSASigner;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -17,7 +26,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -25,10 +36,75 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class CloudApiIntegrationTest {
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine");
+    static final String CLIENT_ID = "test-client";
+    static final String OWNER_EMAIL = "platform-owner@example.com";
+    /** A stand-in for the Auth0 tenant: serves its JWKS and answers the code exchange with a signed ID token. */
+    static final HttpServer AUTH0;
+    static final RSAKey KEY;
+    /** Authorization code -> ID token claims the stand-in returns for it. */
+    static final Map<String, Map<String, Object>> CODES = new ConcurrentHashMap<>();
+    /** Authorization code -> the PKCE code_challenge it was issued for. */
+    static final Map<String, String> CHALLENGES = new ConcurrentHashMap<>();
 
     static {
         // Started before the Spring context; Testcontainers' Ryuk removes it when the JVM exits.
         POSTGRES.start();
+        try {
+            KEY = new RSAKeyGenerator(2048).keyID("test-key").generate();
+            AUTH0 = HttpServer.create(new java.net.InetSocketAddress("localhost", 0), 0);
+            AUTH0.createContext("/.well-known/jwks.json", exchange -> {
+                byte[] body = new JWKSet(KEY.toPublicJWK()).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+            });
+            AUTH0.createContext("/oauth/token", exchange -> {
+                var form = new java.util.HashMap<String, String>();
+                for (String pair : new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).split("&")) {
+                    String[] kv = pair.split("=", 2);
+                    form.put(java.net.URLDecoder.decode(kv[0], java.nio.charset.StandardCharsets.UTF_8),
+                            java.net.URLDecoder.decode(kv[1], java.nio.charset.StandardCharsets.UTF_8));
+                }
+                var claims = CODES.remove(form.get("code"));
+                byte[] body;
+                int status = 200;
+                try {
+                    if (claims == null || !"test-secret".equals(form.get("client_secret"))
+                            || !s256(form.get("code_verifier")).equals(CHALLENGES.remove(form.get("code")))) {
+                        status = 403;
+                        body = "{\"error\":\"invalid_grant\"}".getBytes();
+                    } else {
+                        var builder = new JWTClaimsSet.Builder().issuer(issuer()).audience(CLIENT_ID)
+                                .issueTime(new java.util.Date()).expirationTime(new java.util.Date(System.currentTimeMillis() + 60_000));
+                        claims.forEach(builder::claim);
+                        var jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(KEY.getKeyID()).build(), builder.build());
+                        jwt.sign(new RSASSASigner(KEY));
+                        body = ("{\"id_token\":\"" + jwt.serialize() + "\"}").getBytes();
+                    }
+                } catch (Exception e) {
+                    throw new java.io.IOException(e);
+                }
+                exchange.sendResponseHeaders(status, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+            });
+            AUTH0.start();
+        } catch (Exception e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    static String s256(String verifier) {
+        try {
+            return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    static String issuer() {
+        return "http://localhost:" + AUTH0.getAddress().getPort() + "/";
     }
 
     @DynamicPropertySource
@@ -39,6 +115,10 @@ class CloudApiIntegrationTest {
         registry.add("app.session-secret", () -> "test-secret-test-secret-test-secret-0123");
         registry.add("app.secure-cookie", () -> "false");
         registry.add("app.rate-limit.auth-per-minute", () -> "1000");
+        registry.add("app.auth0.issuer", CloudApiIntegrationTest::issuer);
+        registry.add("app.auth0.client-id", () -> CLIENT_ID);
+        registry.add("app.auth0.client-secret", () -> "test-secret");
+        registry.add("app.owner-email", () -> OWNER_EMAIL);
     }
 
     @LocalServerPort int port;
@@ -46,7 +126,7 @@ class CloudApiIntegrationTest {
     final ObjectMapper json = new ObjectMapper();
     final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
 
-    record Response(int status, JsonNode body, String raw, String cookie) {}
+    record Response(int status, JsonNode body, String raw, String cookie, String location) {}
 
     @BeforeAll
     void loadCatalog() throws Exception {
@@ -62,14 +142,44 @@ class CloudApiIntegrationTest {
                 .method(method, HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)));
         else builder.method(method, HttpRequest.BodyPublishers.noBody());
         var response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-        String setCookie = response.headers().firstValue("Set-Cookie").map(c -> c.split(";")[0]).orElse(null);
+        // The cookie the response actually sets (sign-in responses also clear the finished transaction cookie).
+        String setCookie = response.headers().allValues("Set-Cookie").stream().map(c -> c.split(";")[0])
+                .filter(c -> !c.endsWith("=")).findFirst().orElse(null);
         JsonNode parsed = response.body().startsWith("{") || response.body().startsWith("[") ? json.readTree(response.body()) : null;
-        return new Response(response.statusCode(), parsed, response.body(), setCookie);
+        return new Response(response.statusCode(), parsed, response.body(), setCookie,
+                response.headers().firstValue("Location").orElse(null));
+    }
+
+    static String query(String url, String name) {
+        for (String pair : URI.create(url).getRawQuery().split("&")) {
+            String[] kv = pair.split("=", 2);
+            if (kv[0].equals(name)) return java.net.URLDecoder.decode(kv[1], java.nio.charset.StandardCharsets.UTF_8);
+        }
+        return null;
+    }
+
+    /**
+     * Runs Universal Login end to end against the stand-in: /login redirects to the authorize URL, the "user" signs in
+     * as {@code sub}/{@code email}, and the callback answers. Returns the callback's response.
+     */
+    Response auth0SignIn(String sub, String email, boolean verified) throws Exception {
+        var start = call("GET", "/api/auth/login", null, null);
+        assertEquals(302, start.status(), start.raw());
+        assertTrue(start.location().startsWith(issuer() + "authorize?"), start.location());
+        assertEquals("S256", query(start.location(), "code_challenge_method"));
+        String code = UUID.randomUUID().toString();
+        CODES.put(code, Map.of("sub", sub, "email", email, "email_verified", verified, "name", email,
+                "nonce", query(start.location(), "nonce")));
+        CHALLENGES.put(code, query(start.location(), "code_challenge"));
+        return call("GET", "/api/auth/callback?code=" + code + "&state=" + query(start.location(), "state"), start.cookie(), null);
     }
 
     String signup(String store, String email) throws Exception {
-        var r = call("POST", "/api/auth/signup", null, java.util.Map.of("storeName", store, "name", "Owner",
-                "email", email, "password", "correct horse battery"));
+        var callback = auth0SignIn("auth0|" + UUID.randomUUID(), email, true);
+        assertEquals(302, callback.status(), callback.raw());
+        assertEquals("/signup", URI.create(callback.location()).getPath(), "no account yet, so name the store");
+        assertEquals(email, call("GET", "/api/auth/pending", callback.cookie(), null).body().path("email").asText());
+        var r = call("POST", "/api/auth/signup", callback.cookie(), Map.of("storeName", store, "name", "Owner"));
         assertEquals(200, r.status(), r.raw());
         assertTrue(r.body().path("entitled").asBoolean());
         return r.cookie();
@@ -183,9 +293,11 @@ class CloudApiIntegrationTest {
     void onlyOwnersChangeRatesAndRatesDriveOffers() throws Exception {
         String owner = signup("Rates Store", "r-" + UUID.randomUUID() + "@example.com");
         String staffEmail = "s-" + UUID.randomUUID() + "@example.com";
-        assertEquals(200, call("POST", "/api/app/staff", owner, java.util.Map.of("name", "Sam", "email", staffEmail,
-                "password", "another long password")).status());
-        String staff = call("POST", "/api/auth/login", null, java.util.Map.of("email", staffEmail, "password", "another long password")).cookie();
+        assertEquals(200, call("POST", "/api/app/staff", owner, java.util.Map.of("name", "Sam", "email", staffEmail)).status());
+        // Staff join by signing in with the verified email the owner added.
+        var staffSignIn = auth0SignIn("auth0|" + UUID.randomUUID(), staffEmail.toUpperCase(), true);
+        assertEquals("/app", URI.create(staffSignIn.location()).getPath());
+        String staff = staffSignIn.cookie();
         assertNotNull(staff);
         var rules = java.util.Map.of("rules", java.util.List.of(
                 java.util.Map.of("thresholdMin", 0, "creditRate", 0.5, "checkRate", 0.4),
@@ -195,8 +307,51 @@ class CloudApiIntegrationTest {
         var quote = call("POST", "/api/app/trades/quote", staff, java.util.Map.of("payment", "credit", "lines", java.util.List.of(
                 java.util.Map.of("cardId", "22222222-2222-2222-2222-222222222222", "finish", "normal", "condition", "NM", "quantity", 1))));
         assertEquals(0, new java.math.BigDecimal("33.60").compareTo(quote.body().path("creditOffer").decimalValue()));
-        var badLogin = call("POST", "/api/auth/login", null, java.util.Map.of("email", staffEmail, "password", "wrong password here"));
-        assertEquals(401, badLogin.status());
+    }
+
+    @Test
+    void signInIsKeyedOnAuth0SubWithVerifiedEmailAsTheFallback() throws Exception {
+        String email = "k-" + UUID.randomUUID() + "@example.com";
+        String sub = "auth0|" + UUID.randomUUID();
+        var first = auth0SignIn(sub, email, true);
+        call("POST", "/api/auth/signup", first.cookie(), Map.of("storeName", "Keyed", "name", "Kim"));
+
+        // Same sub with a changed email still finds the account, and picks up the new address.
+        String newEmail = "k2-" + UUID.randomUUID() + "@example.com";
+        var again = auth0SignIn(sub, newEmail, true);
+        assertEquals("/app", URI.create(again.location()).getPath());
+        assertEquals(newEmail, call("GET", "/api/auth/me", again.cookie(), null).body().path("email").asText());
+
+        // A different sub with the same, already linked, email is not let in.
+        var other = auth0SignIn("google-oauth2|" + UUID.randomUUID(), newEmail, true);
+        assertEquals("/login", URI.create(other.location()).getPath());
+        assertTrue(other.cookie() == null || !other.cookie().startsWith("occ_session="));
+    }
+
+    @Test
+    void unverifiedEmailsAndForgedCallbacksAreRefused() throws Exception {
+        var unverified = auth0SignIn("auth0|" + UUID.randomUUID(), "u-" + UUID.randomUUID() + "@example.com", false);
+        assertEquals("/login", URI.create(unverified.location()).getPath());
+        assertTrue(query(unverified.location(), "error").contains("verify"));
+
+        var start = call("GET", "/api/auth/login", null, null);
+        var wrongState = call("GET", "/api/auth/callback?code=x&state=not-the-state", start.cookie(), null);
+        assertEquals("/login", URI.create(wrongState.location()).getPath());
+        var noCookie = call("GET", "/api/auth/callback?code=x&state=" + query(start.location(), "state"), null, null);
+        assertEquals("/login", URI.create(noCookie.location()).getPath());
+        assertEquals(404, call("POST", "/api/auth/signup", null, Map.of("storeName", "X", "name", "Y")).status());
+        // A sign-in transaction cookie is not a session.
+        assertEquals(401, call("GET", "/api/app/rates", "occ_session=" + start.cookie().split("=", 2)[1], null).status());
+    }
+
+    @Test
+    void platformOwnerIsTheVerifiedOwnerEmail() throws Exception {
+        String owner = signup("Owner Store", OWNER_EMAIL);
+        assertTrue(call("GET", "/api/auth/me", owner, null).body().path("admin").asBoolean());
+        String other = signup("Other Store", "o-" + UUID.randomUUID() + "@example.com");
+        assertFalse(call("GET", "/api/auth/me", other, null).body().path("admin").asBoolean());
+        var out = call("POST", "/api/auth/logout", owner, Map.of());
+        assertTrue(out.body().path("logoutUrl").asText().startsWith(issuer() + "v2/logout?client_id=" + CLIENT_ID));
     }
 
     @Test
