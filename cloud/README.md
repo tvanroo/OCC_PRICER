@@ -27,7 +27,7 @@ so web and desktop produce the same offers and cent allocations.
 docker run -d --name occpg -e POSTGRES_USER=occ -e POSTGRES_PASSWORD=occ -e POSTGRES_DB=occ -p 5432:5432 postgres:17-alpine
 cd cloud/api
 export APP_SESSION_SECRET=dev-secret-dev-secret-dev-secret-012345 APP_SECURE_COOKIE=false
-export AUTH0_DOMAIN=dev-tnnibhkgdbepzjy1.us.auth0.com AUTH0_CLIENT_ID=<CardBox Trading client id> AUTH0_CLIENT_SECRET=<its secret>
+export AUTH0_DOMAIN=dev-tnnibhkgdbepzjy1.us.auth0.com AUTH0_CLIENT_ID=i8rRy5TlNKCvd4tMFWOqMkJRY1PhCPvq AUTH0_CLIENT_SECRET=<its secret>
 mvn -DskipTests package
 java -jar target/occ-pricer-cloud.jar import-catalog            # downloads Scryfall bulk data (~500 MB)
 java -jar target/occ-pricer-cloud.jar                           # API on :8080
@@ -61,7 +61,7 @@ cloud/deploy.sh
 
 Store sign-in uses Auth0 Universal Login in the same Auth0 tenant as cardbox.club, so a person has one CardBox login
 for both sites. cardbox.trading has its own Auth0 application, **CardBox Trading** (Regular Web Application), so its
-client id and secret can be rotated or switched off without touching cardbox.club.
+client id (`i8rRy5TlNKCvd4tMFWOqMkJRY1PhCPvq`) and secret can be rotated or switched off without touching cardbox.club. It has the same connections as the CardBox application (Username-Password and Google).
 
 | Setting | Value |
 |---|---|

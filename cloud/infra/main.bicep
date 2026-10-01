@@ -22,7 +22,7 @@ param customDomains array = ['cardbox.trading', 'www.cardbox.trading']
 param auth0Domain string = 'dev-tnnibhkgdbepzjy1.us.auth0.com'
 
 @description('Client id of the "CardBox Trading" Auth0 application. Its secret is the vault secret auth0-client-secret.')
-param auth0ClientId string = ''
+param auth0ClientId string = 'i8rRy5TlNKCvd4tMFWOqMkJRY1PhCPvq'
 
 @description('Verified email of the platform owner.')
 param ownerEmail string = 'toby@vanroojen.com'
