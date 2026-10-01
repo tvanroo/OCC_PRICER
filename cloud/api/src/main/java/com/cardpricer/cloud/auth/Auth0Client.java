@@ -77,7 +77,10 @@ public class Auth0Client {
 
     /** Ends the Auth0 session too, so the next sign-in asks for credentials again. */
     public String logoutUrl(String returnTo) {
-        return issuer + "v2/logout?" + form(Map.of("client_id", clientId, "returnTo", returnTo));
+        var params = new LinkedHashMap<String, String>();
+        params.put("client_id", clientId);
+        params.put("returnTo", returnTo);
+        return issuer + "v2/logout?" + form(params);
     }
 
     public Identity exchange(String code, String redirectUri, String codeVerifier, String nonce) throws Auth0Exception {
