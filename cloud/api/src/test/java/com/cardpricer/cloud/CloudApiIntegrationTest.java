@@ -413,4 +413,19 @@ class CloudApiIntegrationTest {
                 .PUT(HttpRequest.BodyPublishers.ofString("{}")).build();
         assertEquals(415, http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
     }
+
+    private String cacheControl(String path) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build();
+        var response = http.send(request, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode(), path);
+        return response.headers().firstValue("Cache-Control").orElse("");
+    }
+
+    @Test
+    void newReleasesAreNeverHiddenByTheBrowserCache() throws Exception {
+        // The page is always rechecked; the hashed bundles it points at are cached for good.
+        assertEquals("no-cache", cacheControl("/"));
+        assertEquals("no-cache", cacheControl("/app/trades"));
+        assertTrue(cacheControl("/assets/index-test.js").contains("immutable"));
+    }
 }

@@ -14,7 +14,7 @@ export default function PriceCheck() {
   useEffect(() => {
     if (query.trim().length < 2) { setResult(null); setError(''); return }
     const timer = setTimeout(() => {
-      api<SearchResult>(`/api/public/cards?q=${encodeURIComponent(query.trim())}`)
+      api<SearchResult>(`/api/public/cards?q=${encodeURIComponent(query.trim())}&v=${__BUILD_ID__}`)
         .then(r => { setResult(r); setError('') })
         .catch(e => setError(e.message))
     }, 300)
