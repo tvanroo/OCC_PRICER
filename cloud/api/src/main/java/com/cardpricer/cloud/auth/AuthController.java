@@ -242,7 +242,7 @@ public class AuthController {
         var target = jdbc.queryForList("""
                 SELECT o.id FROM users u JOIN users o ON o.auth0_sub = u.auth0_sub JOIN tenants t ON t.id = o.tenant_id
                 WHERE u.id = ? AND u.removed_at IS NULL AND o.tenant_id = ? AND o.removed_at IS NULL
-                AND (NOT ? OR t.cardbox_store_id IS NOT NULL)""", UUID.class, current, body.tenantId(), cardbox.enabled());
+                AND (NOT ? OR t.cardbox_store_id IS NOT NULL OR EXISTS (SELECT 1 FROM cardbox_tokens c WHERE c.auth0_sub = u.auth0_sub AND c.platform_owner))""", UUID.class, current, body.tenantId(), cardbox.enabled());
         if (target.isEmpty()) throw ApiException.forbidden("You are not on that store's team");
         jdbc.update("UPDATE users SET last_used_at = now() WHERE id = ?", target.getFirst());
         setCookie(response, AuthFilter.COOKIE, tokens.issue(target.getFirst()), SessionTokens.LIFETIME, "/");
@@ -269,7 +269,8 @@ public class AuthController {
         var stores = jdbc.queryForList("""
                 SELECT o.tenant_id AS "tenantId", t.name, o.role, o.id = u.id AS current
                 FROM users u JOIN users o ON o.auth0_sub = u.auth0_sub JOIN tenants t ON t.id = o.tenant_id
-                WHERE u.id = ? AND o.removed_at IS NULL AND (NOT ? OR t.cardbox_store_id IS NOT NULL)
+                WHERE u.id = ? AND o.removed_at IS NULL
+                AND (NOT ? OR t.cardbox_store_id IS NOT NULL OR EXISTS (SELECT 1 FROM cardbox_tokens c WHERE c.auth0_sub = u.auth0_sub AND c.platform_owner))
                 ORDER BY lower(t.name)""", user, cardbox.enabled());
         Map<String, Object> me = new HashMap<>(Map.of("name", row.get("name"), "email", row.get("email"), "role", row.get("role"),
                 "admin", isAdmin((String) row.get("email"), (Boolean) row.get("linked"))
