@@ -65,7 +65,7 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
       </header>
       {me.planStatus === 'trial' && me.entitled && <div className="banner">Free trial: {trialDays} days left.</div>}
       <main className={pathname.startsWith('/app/trade') || pathname.startsWith('/app/history') || pathname.startsWith('/app/inventory') || pathname.startsWith('/app/admin') ? 'page wide' : 'page'}>
-        {pathname.startsWith('/app/admin') && me.admin ? <Admin onChange={onSignOut} />
+        {pathname.startsWith('/app/admin') && me.admin ? <Admin me={me} onChange={onSignOut} />
         : !me.entitled ? (
           <div className="panel"><h1>Your trial has ended</h1><p>Contact us to keep using trade-ins, history and exports. The free price check still works.</p></div>
         ) : (

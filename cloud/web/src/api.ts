@@ -25,6 +25,8 @@ export interface Me {
   entitled: boolean
   /** Every store this login is on; `current` marks the one signed in now. */
   stores: { tenantId: string; name: string; role: 'owner' | 'staff'; current: boolean }[]
+  /** People, stores and roles come from CardBox (cardbox.club) and are changed there, through /api/cardbox. */
+  cardbox: boolean
 }
 
 export class ApiError extends Error {

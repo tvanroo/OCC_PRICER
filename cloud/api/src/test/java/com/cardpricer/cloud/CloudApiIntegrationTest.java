@@ -663,6 +663,14 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void theCardBoxLinkStaysOffUntilSwitchedOn() throws Exception {
+        assertNull(query(call("GET", "/api/auth/login", null, null).location(), "audience"), "no CardBox API token requested");
+        String cookie = signup("Unlinked", "unlinked-" + UUID.randomUUID() + "@example.com");
+        assertFalse(call("GET", "/api/auth/me", cookie, null).body().path("cardbox").asBoolean());
+        assertEquals(404, call("GET", "/api/cardbox/people", cookie, null).status());
+    }
+
+    @Test
     void mutatingRequestsMustBeJson() throws Exception {
         String owner = signup("Csrf Store", "c-" + UUID.randomUUID() + "@example.com");
         var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/app/rates"))

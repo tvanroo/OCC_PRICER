@@ -5,6 +5,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import com.cardpricer.cloud.cardbox.CardBoxClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -17,7 +18,8 @@ import java.util.UUID;
 
 /**
  * Guards the paid store workflow under /api/app/**: requires a valid session and a store
- * whose subscription is active or still in trial. /api/admin/** needs the platform owner instead.
+ * whose subscription is active or still in trial. /api/admin/** needs the platform owner instead, and
+ * /api/cardbox/** (people and roles, which CardBox itself guards) only a session.
  * The free price check is never guarded.
  */
 @Component
@@ -28,16 +30,19 @@ public class AuthFilter extends OncePerRequestFilter {
     private final SessionTokens tokens;
     private final JdbcTemplate jdbc;
     private final String ownerEmail;
+    private final boolean cardbox;
 
-    public AuthFilter(SessionTokens tokens, JdbcTemplate jdbc, @Value("${app.owner-email:}") String ownerEmail) {
+    public AuthFilter(SessionTokens tokens, JdbcTemplate jdbc, CardBoxClient cardbox, @Value("${app.owner-email:}") String ownerEmail) {
         this.tokens = tokens;
         this.jdbc = jdbc;
+        this.cardbox = cardbox.enabled();
         this.ownerEmail = ownerEmail.trim();
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/app/") && !request.getRequestURI().startsWith("/api/admin/");
+        String path = request.getRequestURI();
+        return !path.startsWith("/api/app/") && !path.startsWith("/api/admin/") && !path.startsWith("/api/cardbox/");
     }
 
     @Override
@@ -58,20 +63,27 @@ public class AuthFilter extends OncePerRequestFilter {
         }
         var rows = jdbc.query("""
                 SELECT u.id, u.tenant_id, u.role, u.name, u.email, u.auth0_sub IS NOT NULL,
-                       t.plan_status = 'active' OR (t.plan_status = 'trial' AND t.trial_ends_at > now()) AS entitled
-                FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ? AND u.removed_at IS NULL""",
+                       t.plan_status = 'active' OR (t.plan_status = 'trial' AND t.trial_ends_at > now()) AS entitled,
+                       coalesce(c.platform_owner, false), u.auth0_sub
+                FROM users u JOIN tenants t ON t.id = u.tenant_id LEFT JOIN cardbox_tokens c ON c.auth0_sub = u.auth0_sub
+                WHERE u.id = ? AND u.removed_at IS NULL AND (NOT ? OR t.cardbox_store_id IS NOT NULL)""",
                 (rs, i) -> new Object[]{
                         new CurrentUser(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3),
                                 rs.getString(4), rs.getString(5),
-                                rs.getBoolean(6) && !ownerEmail.isEmpty() && ownerEmail.equalsIgnoreCase(rs.getString(5))),
+                                rs.getBoolean(6) && !ownerEmail.isEmpty() && ownerEmail.equalsIgnoreCase(rs.getString(5))
+                                        // With the link on, CardBox's platform_owner role (as of the last sign-in) counts too.
+                                        || cardbox && rs.getBoolean(8),
+                                rs.getString(9)),
                         rs.getBoolean(7)},
-                userId.get());
+                userId.get(), cardbox);
         if (rows.isEmpty()) {
             reject(response, 401, "Please sign in");
             return;
         }
         CurrentUser user = (CurrentUser) rows.getFirst()[0];
-        if (request.getRequestURI().startsWith("/api/admin/")) {
+        if (request.getRequestURI().startsWith("/api/cardbox/")) {
+            // CardBox decides what this person may see and change.
+        } else if (request.getRequestURI().startsWith("/api/admin/")) {
             // The platform admin works whatever the state of their own store's subscription.
             if (!user.admin()) {
                 reject(response, 403, "Only the platform owner can do this");

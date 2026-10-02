@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
+import { CardBoxPeople, CardBoxStores } from './CardBoxPeople'
 
 interface AdminStore {
   id: string; name: string; planStatus: string; trialEndsAt: string; createdAt: string; entitled: boolean
@@ -16,7 +17,20 @@ const day = (iso: string | null) => iso ? new Date(iso).toLocaleDateString([], {
 const isoDay = (iso: string) => iso.slice(0, 10)
 
 /** The platform owner's console: every store and every person, with the changes support needs. */
-export default function Admin({ onChange }: { onChange: () => Promise<void> }) {
+export default function Admin({ me, onChange }: { me: { email: string; cardbox: boolean }; onChange: () => Promise<void> }) {
+  if (me.cardbox) return (
+    <section>
+      <h1>Platform admin</h1>
+      <p className="lede">Every store on CardBox, with its Trading plan. Stores are created and renamed on CardBox for both sites.</p>
+      <CardBoxStores />
+      <h2 style={{ marginTop: 28 }}>People</h2>
+      <CardBoxPeople me={me} onChange={onChange} />
+    </section>
+  )
+  return <LocalAdmin onChange={onChange} />
+}
+
+function LocalAdmin({ onChange }: { onChange: () => Promise<void> }) {
   const [stores, setStores] = useState<AdminStore[]>([])
   const [people, setPeople] = useState<Membership[]>([])
   const [open, setOpen] = useState<string | null>(null)

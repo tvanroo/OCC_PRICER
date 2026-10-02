@@ -32,8 +32,12 @@ import java.util.stream.Collectors;
  */
 @Component
 public class Auth0Client {
-    /** Who signed in, from a validated ID token. */
-    public record Identity(String sub, String email, boolean emailVerified, String name) {}
+    /**
+     * Who signed in, from a validated ID token. {@code accessToken} is only present when an API audience was
+     * requested; it is for calling that API from the server and never reaches the browser.
+     */
+    public record Identity(String sub, String email, boolean emailVerified, String name, String accessToken,
+                           java.time.Instant accessTokenExpiresAt) {}
 
     public static class Auth0Exception extends Exception {
         public Auth0Exception(String message) { super(message); }
@@ -62,7 +66,7 @@ public class Auth0Client {
     }
 
     public String authorizeUrl(String redirectUri, String state, String nonce, String codeChallenge,
-                               boolean signup, boolean chooseAccount) {
+                               boolean signup, boolean chooseAccount, String audience) {
         var params = new LinkedHashMap<String, String>();
         params.put("response_type", "code");
         params.put("client_id", clientId);
@@ -73,6 +77,8 @@ public class Auth0Client {
         params.put("code_challenge", codeChallenge);
         params.put("code_challenge_method", "S256");
         if (signup) params.put("screen_hint", "signup");
+        // An access token for this API (CardBox's), so the server can call it as the person.
+        if (audience != null) params.put("audience", audience);
         // Ask for credentials even if Auth0 still has a session, so a different account can be used.
         if (chooseAccount) params.put("prompt", "login");
         return issuer + "authorize?" + form(params);
@@ -120,8 +126,11 @@ public class Auth0Client {
         Object verified = claims.getClaim("email_verified");
         Object email = claims.getClaim("email");
         Object name = claims.getClaim("name");
+        String accessToken = tokens.path("access_token").asText("");
+        long expiresIn = tokens.path("expires_in").asLong(0);
         return new Identity(claims.getSubject(), email instanceof String s ? s : null, Boolean.TRUE.equals(verified),
-                name instanceof String s ? s : null);
+                name instanceof String s ? s : null, accessToken.isEmpty() ? null : accessToken,
+                expiresIn > 0 ? java.time.Instant.now().plusSeconds(expiresIn) : null);
     }
 
     /** Built on first use so the app starts (and the free price check works) even if Auth0 is unreachable. */

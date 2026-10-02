@@ -24,6 +24,12 @@ app:
     domain: ${AUTH0_DOMAIN:}
     client-id: ${AUTH0_CLIENT_ID:}
     client-secret: ${AUTH0_CLIENT_SECRET:}
+  # People, stores and roles from CardBox's API, called as the signed-in person with an access token for this audience.
+  # Off until CardBox confirms its side is live; with it on, Trading stops managing its own team and stores.
+  cardbox:
+    enabled: ${CARDBOX_ENABLED:false}
+    base-url: ${CARDBOX_BASE_URL:https://cardbox.club}
+    audience: ${CARDBOX_AUDIENCE:https://cardbox.club/api}
   # Platform owner. Only counts once Auth0 has verified the address.
   owner-email: ${OWNER_EMAIL:toby@vanroojen.com}
   trial-days: 30
