@@ -559,9 +559,102 @@ class CloudApiIntegrationTest {
         assertEquals("login", query(start.location(), "prompt"));
     }
 
+    /** The platform owner's session; their email can only sign up once, so every test shares it. */
+    private String platformOwner;
+
+    synchronized String platformOwner() throws Exception {
+        if (platformOwner == null) platformOwner = signup("Owner Store", OWNER_EMAIL);
+        return platformOwner;
+    }
+
+    JsonNode me(String cookie) throws Exception {
+        return call("GET", "/api/auth/me", cookie, null).body();
+    }
+
+    String storeId(String cookie, String name) throws Exception {
+        for (var store : me(cookie).path("stores")) if (store.path("name").asText().equals(name)) return store.path("tenantId").asText();
+        return null;
+    }
+
+    @Test
+    void anExistingLoginCanJoinAnotherStore() throws Exception {
+        String joeEmail = "joe-" + UUID.randomUUID() + "@example.com";
+        String sub = "auth0|" + UUID.randomUUID();
+        var first = auth0SignIn(sub, joeEmail, true);
+        String joe = call("POST", "/api/auth/signup", first.cookie(), Map.of("storeName", "Joe's Cards", "name", "Joe")).cookie();
+        String toby = signup("Toby's Cards", "t-" + UUID.randomUUID() + "@example.com");
+
+        // Adding someone who already has a login in another store works, and they can switch to it at once.
+        var added = call("POST", "/api/app/staff", toby, Map.of("name", "Joe", "email", joeEmail.toUpperCase(), "role", "owner"));
+        assertEquals(200, added.status(), added.raw());
+        assertEquals(409, call("POST", "/api/app/staff", toby, Map.of("name", "Joe", "email", joeEmail)).status(), "already on the team");
+        assertEquals(2, me(joe).path("stores").size());
+        String tobys = storeId(joe, "Toby's Cards");
+        var switched = call("POST", "/api/auth/switch", joe, Map.of("tenantId", tobys));
+        assertEquals(200, switched.status(), switched.raw());
+        assertEquals("Toby's Cards", switched.body().path("store").asText());
+        assertEquals("owner", switched.body().path("role").asText());
+        String joeAtTobys = switched.cookie();
+        assertEquals(200, call("POST", "/api/app/locations", joeAtTobys, Map.of("name", "Joe's corner")).status());
+        assertEquals(403, call("POST", "/api/auth/switch", joe, Map.of("tenantId", UUID.randomUUID().toString())).status());
+
+        // Signing in again opens the store used last; once removed there, sign-in falls back to the other store.
+        assertEquals("Toby's Cards", me(auth0SignIn(sub, joeEmail, true).cookie()).path("store").asText());
+        String joeId = null;
+        for (var person : call("GET", "/api/app/staff", toby, null).body()) if (person.path("email").asText().equals(joeEmail)) joeId = person.path("id").asText();
+        assertEquals(200, call("POST", "/api/app/staff/" + joeId + "/remove", toby, Map.of()).status());
+        assertEquals(401, call("GET", "/api/app/trades", joeAtTobys, null).status());
+        assertEquals(403, call("POST", "/api/auth/switch", joe, Map.of("tenantId", tobys)).status());
+        var back = me(auth0SignIn(sub, joeEmail, true).cookie());
+        assertEquals("Joe's Cards", back.path("store").asText());
+        assertEquals(1, back.path("stores").size());
+    }
+
+    @Test
+    void platformOwnerAdministersEveryStore() throws Exception {
+        String admin = platformOwner();
+        String shopEmail = "shop-" + UUID.randomUUID() + "@example.com";
+        String shop = signup("Admin Target", shopEmail);
+        assertEquals(403, call("GET", "/api/admin/stores", shop, null).status());
+        assertEquals(401, call("GET", "/api/admin/stores", null, null).status());
+
+        var stores = call("GET", "/api/admin/stores", admin, null);
+        assertEquals(200, stores.status(), stores.raw());
+        String id = null;
+        for (var store : stores.body()) if (store.path("name").asText().equals("Admin Target")) id = store.path("id").asText();
+        assertNotNull(id);
+
+        // Ending a store's plan locks its workflow; reactivating it opens it again.
+        assertEquals(200, call("PUT", "/api/admin/stores/" + id, admin, Map.of("planStatus", "canceled")).status());
+        assertEquals(402, call("GET", "/api/app/trades", shop, null).status());
+        var renewed = call("PUT", "/api/admin/stores/" + id, admin, Map.of("planStatus", "trial", "trialEndsAt", "2099-01-31", "name", "Renamed Target"));
+        assertEquals(200, renewed.status(), renewed.raw());
+        assertEquals(200, call("GET", "/api/app/trades", shop, null).status());
+        assertEquals("Renamed Target", me(shop).path("store").asText());
+        assertEquals(400, call("PUT", "/api/admin/stores/" + id, admin, Map.of("planStatus", "free forever")).status());
+
+        // Admin brings anyone onto any store, changes roles, and removes people, but never the last owner.
+        var people = call("POST", "/api/admin/stores/" + id + "/members", admin, Map.of("name", "Helper", "email", "h-" + UUID.randomUUID() + "@example.com"));
+        assertEquals(200, people.status(), people.raw());
+        assertEquals(2, people.body().size());
+        String helper = null, owner = null;
+        for (var p : people.body()) {
+            if (p.path("name").asText().equals("Helper")) helper = p.path("id").asText();
+            else owner = p.path("id").asText();
+        }
+        assertEquals(400, call("PUT", "/api/admin/users/" + owner, admin, Map.of("removed", true)).status());
+        assertEquals(200, call("PUT", "/api/admin/users/" + helper, admin, Map.of("role", "owner")).status());
+        assertEquals(200, call("PUT", "/api/admin/users/" + owner, admin, Map.of("removed", true)).status());
+        assertEquals(401, call("GET", "/api/app/trades", shop, null).status());
+        assertEquals(200, call("PUT", "/api/admin/users/" + owner, admin, Map.of("removed", false)).status());
+        assertEquals(200, call("GET", "/api/app/trades", shop, null).status());
+        var all = call("GET", "/api/admin/users", admin, null).body();
+        assertTrue(all.size() >= 3);
+    }
+
     @Test
     void platformOwnerIsTheVerifiedOwnerEmail() throws Exception {
-        String owner = signup("Owner Store", OWNER_EMAIL);
+        String owner = platformOwner();
         assertTrue(call("GET", "/api/auth/me", owner, null).body().path("admin").asBoolean());
         String other = signup("Other Store", "o-" + UUID.randomUUID() + "@example.com");
         assertFalse(call("GET", "/api/auth/me", other, null).body().path("admin").asBoolean());

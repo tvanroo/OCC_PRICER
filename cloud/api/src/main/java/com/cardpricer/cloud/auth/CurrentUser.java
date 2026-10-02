@@ -4,7 +4,8 @@ import jakarta.servlet.http.HttpServletRequest;
 
 import java.util.UUID;
 
-public record CurrentUser(UUID userId, UUID tenantId, String role, String name, String email) {
+/** {@code admin} is the platform owner: the configured owner email, verified by Auth0. */
+public record CurrentUser(UUID userId, UUID tenantId, String role, String name, String email, boolean admin) {
     static final String ATTRIBUTE = CurrentUser.class.getName();
 
     public boolean owner() { return "owner".equals(role); }

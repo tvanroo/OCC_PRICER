@@ -8,6 +8,9 @@ and the API; PostgreSQL holds the data.
   customers linked by phone number, trade history, tiered buy rates, a store profile, several owners and staff per store,
   multiple locations with every trade tagged to the location it was taken at, inventory per location kept in a storage
   tree each store designs itself (store room, shelf, box, section, or any tiers it likes), and the 19-column receiving POS CSV.
+  One CardBox login can belong to several stores and switch between them.
+- **Platform admin** at `/app/admin` for the verified owner email: every store and person, plan status, trial end dates,
+  renaming stores, and adding, promoting or removing people on any store.
 
 Pricing, condition multipliers, settlement and the POS CSV come from the desktop app's own classes
 (`SettlementEngine`, `PricingService`, `TradePosEncoder`, ...), compiled directly from `../src` (see `api/pom.xml`),

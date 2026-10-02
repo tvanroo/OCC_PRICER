@@ -137,24 +137,33 @@ public class StoreController {
                 CurrentUser.of(request).tenantId());
     }
 
-    /** Adds a person by email as staff or as another owner. Someone removed earlier is brought back. */
+    /**
+     * Adds a person by email as staff or as another owner. Someone who already has a CardBox login (in another store,
+     * say) joins with that login straight away; someone removed earlier is brought back.
+     */
     @PostMapping("/staff")
     public List<Map<String, Object>> addStaff(@Valid @RequestBody StaffBody body, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
-        String email = body.email().trim().toLowerCase(Locale.ROOT);
         String role = body.role() == null ? "staff" : body.role();
+        addMember(jdbc, user.tenantId(), body.name(), body.email(), role);
+        return staff(request);
+    }
+
+    /** Puts a person on a store's team by email; shared with the platform admin. */
+    public static void addMember(JdbcTemplate jdbc, UUID tenant, String name, String rawEmail, String role) {
+        String email = rawEmail.trim().toLowerCase(Locale.ROOT);
         int restored = jdbc.update("""
                 UPDATE users SET removed_at = NULL, name = ?, role = ?
-                WHERE tenant_id = ? AND lower(email) = ? AND removed_at IS NOT NULL""", body.name().trim(), role, user.tenantId(), email);
-        if (restored == 0) {
-            try {
-                jdbc.update("INSERT INTO users (id, tenant_id, email, name, role) VALUES (?, ?, ?, ?, ?)",
-                        UUID.randomUUID(), user.tenantId(), email, body.name().trim(), role);
-            } catch (DuplicateKeyException e) {
-                throw new ApiException(HttpStatus.CONFLICT, "An account with that email already exists");
-            }
+                WHERE tenant_id = ? AND lower(email) = ? AND removed_at IS NOT NULL""", name.trim(), role, tenant, email);
+        if (restored > 0) return;
+        var login = jdbc.queryForList("SELECT auth0_sub FROM users WHERE lower(email) = ? AND auth0_sub IS NOT NULL LIMIT 1",
+                String.class, email);
+        try {
+            jdbc.update("INSERT INTO users (id, tenant_id, email, name, role, auth0_sub) VALUES (?, ?, ?, ?, ?, ?)",
+                    UUID.randomUUID(), tenant, email, name.trim(), role, login.isEmpty() ? null : login.getFirst());
+        } catch (DuplicateKeyException e) {
+            throw new ApiException(HttpStatus.CONFLICT, "That person is already on this store's team");
         }
-        return staff(request);
     }
 
     /** Makes someone an owner or staff. The store always keeps at least one owner. */
@@ -162,7 +171,7 @@ public class StoreController {
     @Transactional
     public List<Map<String, Object>> setRole(@PathVariable UUID id, @Valid @RequestBody RoleBody body, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
-        if ("staff".equals(body.role())) keepAnOwner(user.tenantId(), id);
+        if ("staff".equals(body.role())) keepAnOwner(jdbc, user.tenantId(), id);
         if (jdbc.update("UPDATE users SET role = ? WHERE id = ? AND tenant_id = ? AND removed_at IS NULL",
                 body.role(), id, user.tenantId()) == 0) throw ApiException.notFound("Person not found");
         return staff(request);
@@ -173,14 +182,14 @@ public class StoreController {
     @Transactional
     public List<Map<String, Object>> remove(@PathVariable UUID id, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
-        keepAnOwner(user.tenantId(), id);
+        keepAnOwner(jdbc, user.tenantId(), id);
         if (jdbc.update("UPDATE users SET removed_at = now() WHERE id = ? AND tenant_id = ? AND removed_at IS NULL",
                 id, user.tenantId()) == 0) throw ApiException.notFound("Person not found");
         return staff(request);
     }
 
     /** Refuses a change that would leave the store without an owner when {@code leaving} stops being one. */
-    private void keepAnOwner(UUID tenant, UUID leaving) {
+    public static void keepAnOwner(JdbcTemplate jdbc, UUID tenant, UUID leaving) {
         // Lock the store so two owners can't demote each other at the same moment.
         jdbc.queryForObject("SELECT id FROM tenants WHERE id = ? FOR UPDATE", UUID.class, tenant);
         Integer others = jdbc.queryForObject("""

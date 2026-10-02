@@ -301,3 +301,13 @@ button.thumb { min-height: 0; padding: 0; background: none; border: 0; border-ra
 .add-form label { margin: 0; }
 .add-form input { width: 6rem; }
 .add-form .picked { flex-basis: 100%; font-size: 1.1rem; }
+
+/* Platform admin */
+.admin-store { display: flex; flex-direction: column; gap: 14px; padding: 6px 0; }
+.admin-store .grid { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.inline-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.inline-form label { margin: 0; }
+.inline-form .muted { align-self: center; }
+.grid tr.removed td { color: var(--muted); }
+.grid input[type="date"] { width: auto; }
+.inline-form input { min-width: 14rem; }
