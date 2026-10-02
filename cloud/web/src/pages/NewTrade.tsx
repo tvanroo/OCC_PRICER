@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, CONDITIONS, FINISHES, money, type Card } from '../api'
+import CardLightbox from '../CardLightbox'
+import SearchIcon from '../SearchIcon'
 
 interface Line { key: number; card: Card; finish: string; condition: string; quantity: number }
 interface PricedLine { valuationUnit: number; creditUnit: number; checkUnit: number; creditRate: number; checkRate: number }
@@ -12,30 +14,59 @@ interface Quote {
   settlement: { payment: string; credit: number; check: number }
 }
 interface Saved { id: string; number: number }
+type Payment = 'credit' | 'check' | 'partial'
 
 let nextKey = 1
+
+const finishesOf = (card: Card) => FINISHES.filter(f => f.price(card) != null)
+const times = (unit: number | undefined, qty: number) => unit == null ? undefined : Number(unit) * qty
+/** Shortcuts act on the page only when the user isn't typing into a field. */
+const typing = (target: EventTarget | null) =>
+  target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')
 
 export default function NewTrade() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Card[]>([])
+  const [active, setActive] = useState(0)
   const [noMatch, setNoMatch] = useState(false)
   const [lines, setLines] = useState<Line[]>([])
-  const [payment, setPayment] = useState<'credit' | 'check' | 'partial'>('credit')
+  const [selected, setSelected] = useState<number | null>(null)
+  const [payment, setPayment] = useState<Payment>('credit')
   const [splitCredit, setSplitCredit] = useState('')
   const [phone, setPhone] = useState('')
   const [customerName, setCustomerName] = useState('')
+  const [known, setKnown] = useState<string | null>(null)
   const [checkNumber, setCheckNumber] = useState('')
   const [quote, setQuote] = useState<Quote | null>(null)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState<Saved | null>(null)
+  const [enlarged, setEnlarged] = useState<Card | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); setNoMatch(false); return }
     const timer = setTimeout(() => {
-      api<Card[]>(`/api/app/cards?q=${encodeURIComponent(query.trim())}`).then(r => { setResults(r); setNoMatch(r.length === 0) }).catch(e => setError(e.message))
+      api<Card[]>(`/api/app/cards?q=${encodeURIComponent(query.trim())}`)
+        .then(r => { setResults(r); setActive(0); setNoMatch(r.length === 0) }).catch(e => setError(e.message))
     }, 250)
     return () => clearTimeout(timer)
   }, [query])
+
+  // A returning customer's name fills in once their full phone number is typed.
+  useEffect(() => {
+    setKnown(null)
+    if (phone.replace(/\D/g, '').length < 10) return
+    const timer = setTimeout(() => {
+      api<{ phone: string; name: string }[]>(`/api/app/customers?phone=${encodeURIComponent(phone)}`)
+        .then(found => {
+          if (found.length === 0) return
+          setKnown(found[0].name || 'Returning customer')
+          if (found[0].name) setCustomerName(name => name || found[0].name)
+        })
+        .catch(() => { /* lookup is a convenience; saving still works without it */ })
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [phone])
 
   const request = useMemo(() => ({
     lines: lines.map(l => ({ cardId: l.card.id, finish: l.finish, condition: l.condition, quantity: l.quantity })),
@@ -58,107 +89,205 @@ export default function NewTrade() {
   }, [request, lines.length, payment, splitCredit])
 
   function add(card: Card) {
-    const finish = FINISHES.find(f => f.price(card) != null)?.key ?? 'normal'
-    setLines([...lines, { key: nextKey++, card, finish, condition: 'NM', quantity: 1 }])
+    const key = nextKey++
+    setLines([{ key, card, finish: finishesOf(card)[0]?.key ?? 'normal', condition: 'NM', quantity: 1 }, ...lines])
+    setSelected(key)
     setQuery('')
     setResults([])
     setNoMatch(false)
     setSaved(null)
+    searchRef.current?.focus()
   }
-  const update = (key: number, change: Partial<Line>) => setLines(lines.map(l => l.key === key ? { ...l, ...change } : l))
+  const update = useCallback((key: number, change: Partial<Line>) =>
+    setLines(current => current.map(l => l.key === key ? { ...l, ...change } : l)), [])
+  const remove = (key: number) => {
+    setLines(lines.filter(l => l.key !== key))
+    if (selected === key) setSelected(null)
+  }
 
-  async function save() {
+  const canSave = lines.length > 0 && quote != null && !(payment === 'partial' && splitCredit === '')
+  const save = useCallback(async () => {
+    if (!canSave) return
     try {
       const result = await api<Saved>('/api/app/trades', {
         method: 'POST',
         body: { ...request, customerPhone: phone || undefined, customerName, checkNumber },
       })
       setSaved(result)
-      setLines([]); setPhone(''); setCustomerName(''); setCheckNumber(''); setSplitCredit(''); setPayment('credit')
+      setLines([]); setSelected(null); setPhone(''); setCustomerName(''); setCheckNumber(''); setSplitCredit(''); setPayment('credit')
+      searchRef.current?.focus()
     } catch (e) { setError((e as Error).message) }
+  }, [canSave, request, phone, customerName, checkNumber])
+
+  // Counter shortcuts: / search, 1-5 condition, F foil, + and - quantity, Ctrl/Cmd+S save.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return }
+      if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return
+      if (e.key === '/') { e.preventDefault(); searchRef.current?.focus(); return }
+      const line = lines.find(l => l.key === selected)
+      if (!line) return
+      const digit = Number(e.key)
+      if (digit >= 1 && digit <= CONDITIONS.length) update(line.key, { condition: CONDITIONS[digit - 1] })
+      else if (e.key.toLowerCase() === 'f') {
+        const options = finishesOf(line.card).map(f => f.key as string)
+        if (options.length > 1) update(line.key, { finish: options[(options.indexOf(line.finish) + 1) % options.length] })
+      }
+      else if (e.key === '+' || e.key === '=') update(line.key, { quantity: Math.min(999, line.quantity + 1) })
+      else if (e.key === '-') update(line.key, { quantity: Math.max(1, line.quantity - 1) })
+      else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lines, selected, update, save])
+
+  function onSearchKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(i => Math.min(results.length - 1, i + 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(i => Math.max(0, i - 1)) }
+    else if (e.key === 'Enter' && results[active]) { e.preventDefault(); add(results[active]) }
+    else if (e.key === 'Escape') { setQuery(''); if (lines.length) e.currentTarget.blur() }
   }
 
+  const cards = lines.reduce((n, l) => n + l.quantity, 0)
+  const offer = payment === 'check' ? quote?.checkOffer : quote?.creditOffer
+
   return (
-    <section>
-      <h1>New trade</h1>
-      {saved && (
-        <div className="notice">
-          Trade #{saved.number} saved. <a href={`/api/app/trades/${saved.id}/pos.csv`}>Download POS CSV</a> ·{' '}
-          <Link to={`/app/history/${saved.id}`}>View</Link>
-        </div>
-      )}
-      <div className="picker">
-        <input className="search" placeholder="Add a card by name, set, number or card text, e.g. DMU 391" value={query} onChange={e => setQuery(e.target.value)} />
-        {noMatch && query.trim().length >= 2 && <p className="muted">No cards found.</p>}
-        {results.length > 0 && (
-          <ul className="results">
-            {results.map(card => (
-              <li key={card.id}><button onClick={() => add(card)}>
-                <strong>{card.name}</strong> <span className="muted">{card.set} #{card.number}</span>
-                <span className="right">{money(card.usd ?? card.usdFoil ?? card.usdEtched)}</span>
-              </button></li>
-            ))}
-          </ul>
+    <section className="trade">
+      <div>
+        {saved && (
+          <p className="notice" style={{ marginTop: 0 }}>
+            Trade #{saved.number} saved. <a href={`/api/app/trades/${saved.id}/pos.csv`}>Download POS CSV</a> ·{' '}
+            <Link to={`/app/history/${saved.id}`}>View</Link>
+          </p>
         )}
+        <div className="picker">
+          <div className="search">
+            <SearchIcon />
+            <input ref={searchRef} autoFocus placeholder="Add a card: name, set or number, e.g. DMU 391" value={query}
+                   onChange={e => setQuery(e.target.value)} onKeyDown={onSearchKey} aria-label="Add a card"
+                   role="combobox" aria-expanded={results.length > 0} aria-controls="matches" />
+            {results.length > 0 && <span className="aside hints"><span className="kbd">Enter</span> adds the highlighted card</span>}
+          </div>
+          {noMatch && query.trim().length >= 2 && <p className="muted">No cards found.</p>}
+          {results.length > 0 && (
+            <ul className="matches" id="matches" role="listbox">
+              {results.map((card, i) => (
+                <li key={card.id} role="option" aria-selected={i === active}>
+                  <button type="button" className={i === active ? 'active' : ''} onClick={() => add(card)} onMouseEnter={() => setActive(i)}>
+                    {card.image ? <img src={card.image} alt="" loading="lazy" /> : <span className="noimg" style={{ width: 36, height: 50 }} />}
+                    <span>
+                      <span className="name">{card.name}</span>
+                      <span className="meta">{card.set.toUpperCase()} #{card.number} · <span style={{ textTransform: 'capitalize' }}>{card.rarity}</span> · {card.setName}</span>
+                    </span>
+                    <span className="prices">
+                      {finishesOf(card).map(f => <span key={f.key}><small>{f.label}</small>{money(f.price(card))}</span>)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="lines">
+          <div className="lines-head">
+            <h2>{lines.length === 0 ? 'This trade' : `This trade · ${lines.length} ${lines.length === 1 ? 'line' : 'lines'}, ${cards} ${cards === 1 ? 'card' : 'cards'}`}</h2>
+            <span className="hints"><span><span className="kbd">/</span> search</span><span><span className="kbd">1</span>–<span className="kbd">5</span> condition</span>
+              <span><span className="kbd">F</span> foil</span><span><span className="kbd">+</span> <span className="kbd">−</span> qty</span></span>
+          </div>
+          {lines.length === 0 ? <p className="empty">Search above to add the customer's cards.</p> : (
+            <>
+              {lines.map((line, i) => {
+                const priced = quote?.lines[i]
+                const finishes = finishesOf(line.card)
+                return (
+                  <div key={line.key} className={line.key === selected ? 'line selected' : 'line'} onPointerDown={() => setSelected(line.key)}>
+                    {line.card.image
+                      ? <button type="button" className="thumb" onClick={() => setEnlarged(line.card)} aria-label={`Enlarge ${line.card.name}`}><img src={line.card.image} alt="" /></button>
+                      : <span className="noimg" />}
+                    <div className="card">
+                      <strong>{line.card.name}</strong>
+                      <span className="meta">{line.card.set.toUpperCase()} #{line.card.number} · <span style={{ textTransform: 'capitalize' }}>{line.card.rarity}</span></span>
+                    </div>
+                    <div className="controls">
+                      {finishes.length > 1
+                        ? <div className="seg finish" role="group" aria-label="Finish">
+                            {finishes.map(f => <button key={f.key} type="button" aria-pressed={line.finish === f.key} onClick={() => update(line.key, { finish: f.key })}>{f.label}</button>)}
+                          </div>
+                        : <span className="finish muted small">{finishes[0]?.label ?? 'Normal'}</span>}
+                      <div className="seg cond" role="group" aria-label="Condition">
+                        {CONDITIONS.map(c => <button key={c} type="button" aria-pressed={line.condition === c} onClick={() => update(line.key, { condition: c })}>{c}</button>)}
+                      </div>
+                      <div className="stepper" role="group" aria-label="Quantity">
+                        <button type="button" aria-label="Fewer" onClick={() => update(line.key, { quantity: Math.max(1, line.quantity - 1) })}>−</button>
+                        <span aria-live="polite">{line.quantity}</span>
+                        <button type="button" aria-label="More" onClick={() => update(line.key, { quantity: Math.min(999, line.quantity + 1) })}>+</button>
+                      </div>
+                    </div>
+                    <div className="market">{money(times(priced?.valuationUnit, line.quantity))}
+                      <small>{line.quantity > 1 ? `${money(priced?.valuationUnit)} each` : 'market'}</small></div>
+                    <div className="credit">{money(times(priced?.creditUnit, line.quantity))}<small>credit</small></div>
+                    <div className="check">{money(times(priced?.checkUnit, line.quantity))}<small>check</small></div>
+                    <button type="button" className="remove icon-button" aria-label={`Remove ${line.card.name}`} onClick={() => remove(line.key)}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+                      </svg>
+                    </button>
+                  </div>
+                )
+              })}
+            </>
+          )}
+        </div>
+        {error && <p className="error">{error}</p>}
       </div>
 
-      {lines.length > 0 && (
-        <table className="grid">
-          <thead><tr><th>Card</th><th>Finish</th><th>Condition</th><th>Qty</th><th>Value</th><th>Credit</th><th>Check</th><th /></tr></thead>
-          <tbody>
-            {lines.map((line, i) => {
-              const priced = quote?.lines[i]
-              return (
-                <tr key={line.key}>
-                  <td>{line.card.name}<div className="muted small">{line.card.set} #{line.card.number}</div></td>
-                  <td><select value={line.finish} onChange={e => update(line.key, { finish: e.target.value })}>
-                    {FINISHES.filter(f => f.price(line.card) != null).map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
-                  </select></td>
-                  <td><select value={line.condition} onChange={e => update(line.key, { condition: e.target.value })}>
-                    {CONDITIONS.map(c => <option key={c}>{c}</option>)}
-                  </select></td>
-                  <td><input type="number" min={1} max={999} className="qty" value={line.quantity}
-                             onChange={e => update(line.key, { quantity: Math.max(1, Number(e.target.value) || 1) })} /></td>
-                  <td>{money(priced?.valuationUnit)}</td>
-                  <td>{money(priced?.creditUnit)}</td>
-                  <td>{money(priced?.checkUnit)}</td>
-                  <td><button className="link" onClick={() => setLines(lines.filter(l => l.key !== line.key))} aria-label="Remove">✕</button></td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      )}
-
-      {quote && (
-        <div className="checkout">
-          <div className="totals">
-            <div><span>Market value</span><strong>{money(quote.marketTotal)}</strong></div>
-            <div><span>Store credit offer</span><strong>{money(quote.creditOffer)}</strong></div>
-            <div><span>Check offer</span><strong>{money(quote.checkOffer)}</strong></div>
-          </div>
-          <fieldset>
-            <legend>Payout</legend>
-            {(['credit', 'check', 'partial'] as const).map(p => (
-              <label key={p} className="inline"><input type="radio" checked={payment === p} onChange={() => setPayment(p)} />
-                {p === 'credit' ? 'Store credit' : p === 'check' ? 'Check' : 'Split'}</label>
-            ))}
-            {payment === 'partial' && (
-              <label>Store credit amount<input type="number" min={0} step="0.01" value={splitCredit} onChange={e => setSplitCredit(e.target.value)} /></label>
-            )}
-            <p>Pay out: <strong>{money(quote.settlement.credit)}</strong> credit
-              {Number(quote.settlement.check) > 0 && <> + <strong>{money(quote.settlement.check)}</strong> check</>}</p>
-          </fieldset>
-          <fieldset>
-            <legend>Customer</legend>
-            <label>Phone number<input type="tel" autoComplete="off" value={phone} onChange={e => setPhone(e.target.value)} placeholder="(555) 010-2030" /></label>
-            <label>Name<input value={customerName} onChange={e => setCustomerName(e.target.value)} /></label>
-            {payment !== 'credit' && <label>Check number<input value={checkNumber} onChange={e => setCheckNumber(e.target.value)} /></label>}
-          </fieldset>
-          <button onClick={save} disabled={payment === 'partial' && splitCredit === ''}>Save trade</button>
+      <aside className="trade-rail">
+        <div className="rail-card">
+          <label>Customer phone<input type="tel" inputMode="tel" autoComplete="off" value={phone} onChange={e => setPhone(e.target.value)} placeholder="(555) 010-2030" /></label>
+          {known && <div className="match" role="status">Returning customer: <strong>{known}</strong></div>}
+          <label>Name<input value={customerName} onChange={e => setCustomerName(e.target.value)} /></label>
         </div>
+
+        <div className="rail-card">
+          <div className="sum"><span>Market value</span><strong>{money(quote?.marketTotal)}</strong></div>
+          <div className="seg wide" role="group" aria-label="Payout">
+            {(['credit', 'check', 'partial'] as const).map(p => (
+              <button key={p} type="button" aria-pressed={payment === p} onClick={() => setPayment(p)}>
+                {p === 'credit' ? 'Credit' : p === 'check' ? 'Check' : 'Split'}
+              </button>
+            ))}
+          </div>
+          {!quote ? <p className="muted" style={{ margin: 0 }}>Add cards to see the offer.</p> : payment === 'partial' ? (
+            <>
+              <label>Store credit amount<input type="number" inputMode="decimal" min={0} step="0.01" value={splitCredit} onChange={e => setSplitCredit(e.target.value)} /></label>
+              <div className="offer">
+                <div className="label">Pay out</div>
+                <div className="amount">{money(quote?.settlement.credit)}</div>
+                <p>credit, plus <strong className="num">{money(quote?.settlement.check)}</strong> by check</p>
+              </div>
+            </>
+          ) : (
+            <div className="offer">
+              <div className="label">{payment === 'check' ? 'Check offer' : 'Store credit offer'}</div>
+              <div className="amount">{money(offer)}</div>
+              <p>{payment === 'check' ? 'Store credit instead: ' : 'Check instead: '}
+                <strong className="num">{money(payment === 'check' ? quote?.creditOffer : quote?.checkOffer)}</strong></p>
+            </div>
+          )}
+          {payment !== 'credit' && <label>Check number<input value={checkNumber} onChange={e => setCheckNumber(e.target.value)} /></label>}
+          <button type="button" className="save" onClick={save} disabled={!canSave}>
+            Save trade <span className="kbd">Ctrl S</span>
+          </button>
+          <p className="muted small" style={{ margin: 0, textAlign: 'center' }}>Saving records the trade and gives you its POS CSV.</p>
+        </div>
+      </aside>
+
+      {enlarged?.image && (
+        <CardLightbox image={enlarged.image} onClose={() => setEnlarged(null)}
+                      caption={`${enlarged.name} · ${enlarged.setName} (${enlarged.set}) #${enlarged.number}`} />
       )}
-      {error && <p className="error">{error}</p>}
     </section>
   )
 }

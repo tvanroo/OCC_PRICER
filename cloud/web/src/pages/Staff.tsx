@@ -18,10 +18,10 @@ export default function Staff({ me }: { me: Me }) {
   return (
     <section>
       <h1>Staff</h1>
-      <table className="grid">
+      <div className="table-wrap"><table className="grid">
         <thead><tr><th>Name</th><th>Email</th><th>Role</th></tr></thead>
         <tbody>{staff.map(s => <tr key={s.id}><td>{s.name}</td><td>{s.email}</td><td>{s.role}</td></tr>)}</tbody>
-      </table>
+      </table></div>
       {me.role === 'owner' && (
         <form className="panel narrow" onSubmit={add}>
           <h2>Add a staff account</h2>

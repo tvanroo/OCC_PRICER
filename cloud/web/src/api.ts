@@ -51,6 +51,13 @@ export function money(value: Money | undefined): string {
   return `$${Number(value).toFixed(2)}`
 }
 
+/** US numbers are stored as bare digits; show them the way staff read them aloud. */
+export function phoneText(value: string | null | undefined): string {
+  const digits = (value ?? '').replace(/\D/g, '')
+  const local = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
+  return local.length === 10 ? `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}` : value ?? ''
+}
+
 export const FINISHES = [
   { key: 'normal', label: 'Normal', price: (c: Card) => c.usd },
   { key: 'foil', label: 'Foil', price: (c: Card) => c.usdFoil },

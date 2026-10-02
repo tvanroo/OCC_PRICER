@@ -4,6 +4,7 @@ import { api, ApiError, type Me } from './api'
 import PriceCheck from './pages/PriceCheck'
 import { Login, Signup } from './pages/Auth'
 import StoreApp from './pages/StoreApp'
+import { Mark, Wordmark } from './Brand'
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined)
@@ -19,7 +20,7 @@ export default function App() {
       <Route path="/login" element={me ? <Navigate to="/app" replace /> : <Public me={me}><Login /></Public>} />
       <Route path="/signup" element={me ? <Navigate to="/app" replace /> : <Public me={me}><Signup onDone={refresh} /></Public>} />
       <Route path="/app/*" element={
-        me === undefined ? <p className="page">Loading…</p>
+        me === undefined ? <p className="page muted">Loading…</p>
           : me === null ? <Navigate to="/login" replace />
           : <StoreApp me={me} onSignOut={refresh} />
       } />
@@ -32,9 +33,11 @@ function Public({ me, children }: { me: Me | null | undefined; children: React.R
   return (
     <>
       <header className="topbar">
-        <Link to="/" className="brand">OCC Pricer</Link>
-        <nav>
-          {me ? <Link to="/app">Open {me.store}</Link> : <><a href="/api/auth/login">Store sign in</a><Link to="/signup" className="button small">Start free trial</Link></>}
+        <Link to="/" className="brand"><Mark /><Wordmark /></Link>
+        <nav className="who">
+          {me
+            ? <Link to="/app/trade" className="button small">Open {me.store}</Link>
+            : <><a href="/api/auth/login" className="button small ghost">Store sign in</a><Link to="/signup" className="button small">Start free trial</Link></>}
         </nav>
       </header>
       <main className="page">{children}</main>
