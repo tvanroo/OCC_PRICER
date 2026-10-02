@@ -24,7 +24,8 @@ const times = (unit: number | undefined, qty: number) => unit == null ? undefine
 const typing = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')
 
-export default function NewTrade() {
+/** `locationId` is this register's location; the trade's cards are tagged to it. */
+export default function NewTrade({ locationId }: { locationId: string | null }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Card[]>([])
   const [active, setActive] = useState(0)
@@ -111,13 +112,13 @@ export default function NewTrade() {
     try {
       const result = await api<Saved>('/api/app/trades', {
         method: 'POST',
-        body: { ...request, customerPhone: phone || undefined, customerName, checkNumber },
+        body: { ...request, customerPhone: phone || undefined, customerName, checkNumber, locationId: locationId ?? undefined },
       })
       setSaved(result)
       setLines([]); setSelected(null); setPhone(''); setCustomerName(''); setCheckNumber(''); setSplitCredit(''); setPayment('credit')
       searchRef.current?.focus()
     } catch (e) { setError((e as Error).message) }
-  }, [canSave, request, phone, customerName, checkNumber])
+  }, [canSave, request, phone, customerName, checkNumber, locationId])
 
   // Counter shortcuts: / search, 1-5 condition, F foil, + and - quantity, Ctrl/Cmd+S save.
   useEffect(() => {

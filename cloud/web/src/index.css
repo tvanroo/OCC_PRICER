@@ -263,3 +263,14 @@ button.thumb { min-height: 0; padding: 0; background: none; border: 0; border-ra
   .topbar, .banner, .footer, button, .button, .back { display: none; }
   :root { --bg: #fff; --surface: #fff; }
 }
+
+/* Store settings */
+.settings { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) { .settings { grid-template-columns: 1fr; } }
+.location-list { list-style: none; margin: .75rem 0 1rem; padding: 0; border-top: 1px solid var(--line-soft); }
+.location-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+.location-list li.archived strong { color: var(--muted); }
+.location-list .row-actions { display: flex; gap: 16px; flex: none; }
+.location-form { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.grid select { min-height: 36px; }
+.topbar select.register { min-height: 36px; padding: 0 .5rem; background: #17222c; color: var(--chrome-text); border-color: #384553; }

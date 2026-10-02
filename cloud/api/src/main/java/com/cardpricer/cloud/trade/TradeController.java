@@ -26,7 +26,7 @@ public class TradeController {
     public record QuoteRequest(List<TradeService.LineInput> lines, String payment, BigDecimal credit, BigDecimal check) {}
     public record SaveRequest(List<TradeService.LineInput> lines, String payment, BigDecimal credit, BigDecimal check,
                               @Size(max = 40) String customerPhone, @Size(max = 120) String customerName,
-                              @Size(max = 40) String checkNumber) {}
+                              @Size(max = 40) String checkNumber, UUID locationId) {}
 
     private final TradeService trades;
     private final CatalogRepository catalog;
@@ -70,23 +70,28 @@ public class TradeController {
                 throw ApiException.badRequest("Enter the check number");
         }
         var quote = trades.quote(user.tenantId(), body.lines(), body.payment(), body.credit(), body.check());
-        UUID id = trades.save(user.tenantId(), user.userId(), quote, body.customerPhone(), body.customerName(), body.checkNumber());
+        UUID location = trades.location(user.tenantId(), body.locationId());
+        UUID id = trades.save(user.tenantId(), user.userId(), location, quote, body.customerPhone(), body.customerName(), body.checkNumber());
         return trade(id, request);
     }
 
     @GetMapping("/trades")
     public List<Map<String, Object>> history(@RequestParam(value = "phone", defaultValue = "") String phone,
                                              @RequestParam(value = "before", required = false) Long before,
+                                             @RequestParam(value = "location", required = false) UUID location,
                                              HttpServletRequest request) {
         UUID tenant = CurrentUser.of(request).tenantId();
         String normalized = phone.isBlank() ? "" : TradeService.normalizePhone(phone);
         return jdbc.queryForList("""
                 SELECT t.id, t.number, t.created_at, t.payment, t.credit_total, t.check_total, t.market_total,
                        c.phone AS customer_phone, c.name AS customer_name, u.name AS created_by,
+                       t.location_id, loc.name AS location,
                        (SELECT sum(quantity) FROM trade_lines l WHERE l.trade_id = t.id) AS cards
                 FROM trades t LEFT JOIN customers c ON c.id = t.customer_id JOIN users u ON u.id = t.created_by
+                     JOIN locations loc ON loc.id = t.location_id
                 WHERE t.tenant_id = ? AND (? = '' OR c.phone = ?) AND (?::bigint IS NULL OR t.number < ?)
-                ORDER BY t.number DESC LIMIT 50""", tenant, normalized, normalized, before, before);
+                      AND (?::uuid IS NULL OR t.location_id = ?)
+                ORDER BY t.number DESC LIMIT 50""", tenant, normalized, normalized, before, before, location, location);
     }
 
     @GetMapping("/trades/{id}")
@@ -94,8 +99,10 @@ public class TradeController {
         UUID tenant = CurrentUser.of(request).tenantId();
         var rows = jdbc.queryForList("""
                 SELECT t.id, t.number, t.created_at, t.payment, t.credit_total, t.check_total, t.market_total,
-                       t.check_number, c.phone AS customer_phone, c.name AS customer_name, u.name AS created_by
+                       t.check_number, c.phone AS customer_phone, c.name AS customer_name, u.name AS created_by,
+                       t.location_id, loc.name AS location
                 FROM trades t LEFT JOIN customers c ON c.id = t.customer_id JOIN users u ON u.id = t.created_by
+                     JOIN locations loc ON loc.id = t.location_id
                 WHERE t.id = ? AND t.tenant_id = ?""", id, tenant);
         if (rows.isEmpty()) throw ApiException.notFound("Trade not found");
         Map<String, Object> trade = new HashMap<>(rows.getFirst());

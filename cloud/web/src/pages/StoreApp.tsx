@@ -1,5 +1,6 @@
+import { useCallback, useEffect, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { type Me } from '../api'
+import { api, registerLocation, setRegisterLocation, type Me, type StoreInfo } from '../api'
 import { useSignOut } from '../App'
 import { Mark, Wordmark } from '../Brand'
 import NewTrade from './NewTrade'
@@ -7,10 +8,22 @@ import { History, TradeDetail } from './History'
 import PriceCheck from './PriceCheck'
 import Rates from './Rates'
 import Staff from './Staff'
+import Store from './Store'
 
 export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => Promise<void> }) {
   const signOut = useSignOut(onSignOut)
   const { pathname } = useLocation()
+  const [store, setStore] = useState<StoreInfo | null>(null)
+  const [locationId, setLocationId] = useState<string | null>(null)
+  const loadStore = useCallback((info: StoreInfo) => {
+    setStore(info)
+    setLocationId(current => info.locations.some(l => l.id === current && !l.archived) ? current : registerLocation(info)?.id ?? null)
+  }, [])
+  useEffect(() => {
+    if (me.entitled) api<StoreInfo>('/api/app/store').then(loadStore).catch(() => setStore(null))
+  }, [me.entitled, loadStore])
+  const open = store?.locations.filter(l => !l.archived) ?? []
+  const pickLocation = (id: string) => { setRegisterLocation(id); setLocationId(id) }
   const trialDays = Math.max(0, Math.ceil((new Date(me.trialEndsAt).getTime() - Date.now()) / 86_400_000))
   return (
     <>
@@ -21,10 +34,17 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
           <NavLink to="/app/price">Price check</NavLink>
           <NavLink to="/app/history">History</NavLink>
           <NavLink to="/app/rates">Buy rates</NavLink>
-          <NavLink to="/app/staff">Staff</NavLink>
+          <NavLink to="/app/staff">Team</NavLink>
+          <NavLink to="/app/store">Store</NavLink>
         </nav>
         <div className="who">
           <strong>{me.store}</strong>
+          {open.length > 1 && locationId && (
+            <select className="register" aria-label="This register's location" title="Trades taken on this device go to this location"
+              value={locationId} onChange={e => pickLocation(e.target.value)}>
+              {open.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          )}
           <span>{me.name}</span>
           <button className="small ghost" onClick={signOut}>Sign out</button>
         </div>
@@ -35,12 +55,13 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
           <div className="panel"><h1>Your trial has ended</h1><p>Contact us to keep using trade-ins, history and exports. The free price check still works.</p></div>
         ) : (
           <Routes>
-            <Route path="trade" element={<NewTrade />} />
+            <Route path="trade" element={<NewTrade locationId={locationId} />} />
             <Route path="price" element={<PriceCheck />} />
-            <Route path="history" element={<History />} />
+            <Route path="history" element={<History locations={store?.locations ?? []} />} />
             <Route path="history/:id" element={<TradeDetail />} />
             <Route path="rates" element={<Rates me={me} />} />
-            <Route path="staff" element={<Staff me={me} />} />
+            <Route path="staff" element={<Staff me={me} onChange={onSignOut} />} />
+            <Route path="store" element={<Store me={me} store={store} onSaved={info => { loadStore(info); onSignOut() }} />} />
             <Route path="*" element={<Navigate to="trade" replace />} />
           </Routes>
         )}

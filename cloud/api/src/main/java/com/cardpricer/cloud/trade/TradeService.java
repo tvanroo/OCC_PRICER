@@ -107,8 +107,21 @@ public class TradeService {
                 valuation.multiply(rule.checkRate).setScale(2, RoundingMode.HALF_UP));
     }
 
+    /**
+     * The open location a trade's cards go into: the one the register asked for, or the store's first open
+     * location when it didn't say.
+     */
+    public UUID location(UUID tenant, UUID requested) {
+        var ids = jdbc.queryForList("""
+                SELECT id FROM locations WHERE tenant_id = ? AND archived_at IS NULL AND (?::uuid IS NULL OR id = ?)
+                ORDER BY created_at LIMIT 1""", UUID.class, tenant, requested, requested);
+        if (ids.isEmpty()) throw ApiException.badRequest(requested == null ? "This store has no open location"
+                : "That location is closed or not part of this store. Pick this register's location again.");
+        return ids.getFirst();
+    }
+
     @Transactional
-    public UUID save(UUID tenant, UUID user, Quote quote, String phone, String customerName, String checkNumber) {
+    public UUID save(UUID tenant, UUID user, UUID location, Quote quote, String phone, String customerName, String checkNumber) {
         UUID customer = upsertCustomer(tenant, phone, customerName);
         // Lock the tenant row so trade numbers stay sequential per store.
         jdbc.queryForObject("SELECT id FROM tenants WHERE id = ? FOR UPDATE", UUID.class, tenant);
@@ -117,9 +130,9 @@ public class TradeService {
         var s = quote.settlement();
         jdbc.update("""
                 INSERT INTO trades (id, tenant_id, number, customer_id, created_by, payment, credit_total, check_total,
-                                    market_total, check_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    market_total, check_number, location_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 id, tenant, number, customer, user, s.payment(), s.credit(), s.check(), s.market(),
-                checkNumber == null ? "" : checkNumber.trim());
+                checkNumber == null ? "" : checkNumber.trim(), location);
         List<Object[]> rows = new ArrayList<>();
         for (int i = 0; i < quote.lines().size(); i++) {
             PricedLine l = quote.lines().get(i);

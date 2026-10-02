@@ -131,6 +131,10 @@ public class AuthController {
                 jdbc.update("UPDATE users SET auth0_sub = ? WHERE id = ? AND auth0_sub IS NULL", identity.sub(), user);
             }
         }
+        if (user != null && jdbc.queryForObject("SELECT removed_at IS NOT NULL FROM users WHERE id = ?", Boolean.class, user)) {
+            fail(response, "You no longer have access to this store. Ask a store owner to add you again.");
+            return;
+        }
         if (user == null) {
             String name = identity.name() == null || identity.name().equalsIgnoreCase(email) ? "" : identity.name().replace('\n', ' ');
             setCookie(response, SIGNUP_COOKIE, tokens.seal(PENDING, String.join("\n", identity.sub(), email, name), Duration.ofMinutes(30)),
@@ -149,7 +153,10 @@ public class AuthController {
         return Map.of("email", parts[1], "name", parts[2]);
     }
 
-    /** Creates a store in trial with default rates (50% credit, 40% check), owned by the pending Auth0 identity. */
+    /**
+     * Creates a store in trial with one location and default rates (50% credit, 40% check), owned by the pending
+     * Auth0 identity.
+     */
     @PostMapping("/signup")
     @Transactional
     public Map<String, Object> signup(@Valid @RequestBody SignupRequest body, HttpServletRequest request, HttpServletResponse response) {
@@ -164,6 +171,7 @@ public class AuthController {
         } catch (DuplicateKeyException e) {
             throw new ApiException(HttpStatus.CONFLICT, "An account with that email already exists. Please sign in.");
         }
+        jdbc.update("INSERT INTO locations (id, tenant_id, name) VALUES (?, ?, 'Main')", UUID.randomUUID(), tenant);
         jdbc.update("INSERT INTO buy_rate_rules (tenant_id, threshold_min, credit_rate, check_rate) VALUES (?, ?, ?, ?)",
                 tenant, BigDecimal.ZERO, new BigDecimal("0.50"), new BigDecimal("0.40"));
         setCookie(response, SIGNUP_COOKIE, "", Duration.ZERO, "/api/auth");
@@ -190,7 +198,7 @@ public class AuthController {
         var rows = jdbc.queryForList("""
                 SELECT u.name, u.email, u.role, u.auth0_sub IS NOT NULL AS linked, t.name AS store, t.plan_status, t.trial_ends_at,
                        t.plan_status = 'active' OR (t.plan_status = 'trial' AND t.trial_ends_at > now()) AS entitled
-                FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ?""", user);
+                FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ? AND u.removed_at IS NULL""", user);
         if (rows.isEmpty()) throw new ApiException(HttpStatus.UNAUTHORIZED, "Please sign in");
         var row = rows.getFirst();
         return Map.of("name", row.get("name"), "email", row.get("email"), "role", row.get("role"),

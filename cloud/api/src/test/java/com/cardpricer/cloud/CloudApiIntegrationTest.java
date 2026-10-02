@@ -355,6 +355,106 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void ownersEditTheStoreProfileAndLocations() throws Exception {
+        String owner = signup("Profile Store", "p-" + UUID.randomUUID() + "@example.com");
+        var store = call("GET", "/api/app/store", owner, null);
+        assertEquals(200, store.status(), store.raw());
+        assertEquals(1, store.body().path("locations").size(), "signup creates one location");
+        assertEquals("Main", store.body().path("locations").get(0).path("name").asText());
+
+        var saved = call("PUT", "/api/app/store", owner, Map.of("name", "Renamed Store", "website", "renamed.example.com",
+                "phone", "555-0100", "contactEmail", "Hello@Renamed.example.com"));
+        assertEquals(200, saved.status(), saved.raw());
+        assertEquals("https://renamed.example.com", saved.body().path("website").asText());
+        assertEquals("hello@renamed.example.com", saved.body().path("contactEmail").asText());
+        assertEquals("Renamed Store", call("GET", "/api/auth/me", owner, null).body().path("store").asText());
+        assertEquals(400, call("PUT", "/api/app/store", owner, Map.of("name", "X", "website", "not a site")).status());
+
+        var added = call("POST", "/api/app/locations", owner, Map.of("name", "Downtown", "address", "1 Main St"));
+        assertEquals(200, added.status(), added.raw());
+        assertEquals(2, added.body().path("locations").size());
+        assertEquals(409, call("POST", "/api/app/locations", owner, Map.of("name", "downtown")).status());
+        String main = added.body().path("locations").get(0).path("id").asText();
+        String downtown = added.body().path("locations").get(1).path("id").asText();
+
+        var archived = call("PUT", "/api/app/locations/" + main, owner, Map.of("name", "Main", "archived", true));
+        assertEquals(200, archived.status(), archived.raw());
+        assertTrue(archived.body().path("locations").get(1).path("archived").asBoolean(), "archived locations sort last");
+        var last = call("PUT", "/api/app/locations/" + downtown, owner, Map.of("name", "Downtown", "archived", true));
+        assertEquals(400, last.status(), "a store keeps one open location");
+
+        String staffEmail = "ps-" + UUID.randomUUID() + "@example.com";
+        call("POST", "/api/app/staff", owner, Map.of("name", "Sam", "email", staffEmail));
+        String staff = auth0SignIn("auth0|" + UUID.randomUUID(), staffEmail, true).cookie();
+        assertEquals(200, call("GET", "/api/app/store", staff, null).status(), "staff read locations for the register picker");
+        assertEquals(403, call("PUT", "/api/app/store", staff, Map.of("name", "Mine now")).status());
+        assertEquals(403, call("POST", "/api/app/locations", staff, Map.of("name", "Annex")).status());
+
+        String other = signup("Other Profile Store", "op-" + UUID.randomUUID() + "@example.com");
+        assertEquals(404, call("PUT", "/api/app/locations/" + downtown, other, Map.of("name", "Taken")).status());
+    }
+
+    @Test
+    void tradesAreTaggedToALocation() throws Exception {
+        String owner = signup("Two Shops", "l-" + UUID.randomUUID() + "@example.com");
+        String main = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+        String annex = call("POST", "/api/app/locations", owner, Map.of("name", "Annex")).body().path("locations").get(1).path("id").asText();
+        var lines = java.util.List.of(Map.of("cardId", "33333333-3333-3333-3333-333333333333", "finish", "etched", "condition", "NM", "quantity", 1));
+
+        var defaulted = call("POST", "/api/app/trades", owner, Map.of("payment", "credit", "lines", lines));
+        assertEquals(200, defaulted.status(), defaulted.raw());
+        assertEquals("Main", defaulted.body().path("location").asText(), "no location means the first open one");
+        var atAnnex = call("POST", "/api/app/trades", owner, Map.of("payment", "credit", "lines", lines, "locationId", annex));
+        assertEquals("Annex", atAnnex.body().path("location").asText());
+
+        var filtered = call("GET", "/api/app/trades?location=" + annex, owner, null);
+        assertEquals(1, filtered.body().size());
+        assertEquals("Annex", filtered.body().get(0).path("location").asText());
+        assertEquals(2, call("GET", "/api/app/trades", owner, null).body().size());
+
+        call("PUT", "/api/app/locations/" + annex, owner, Map.of("name", "Annex", "archived", true));
+        assertEquals(400, call("POST", "/api/app/trades", owner, Map.of("payment", "credit", "lines", lines, "locationId", annex)).status());
+        String other = signup("Not Mine", "nm-" + UUID.randomUUID() + "@example.com");
+        assertEquals(400, call("POST", "/api/app/trades", other, Map.of("payment", "credit", "lines", lines, "locationId", main)).status(),
+                "another store's location is refused");
+    }
+
+    @Test
+    void storesCanHaveSeveralOwners() throws Exception {
+        String firstEmail = "f-" + UUID.randomUUID() + "@example.com";
+        String first = signup("Partners", firstEmail);
+        String partnerEmail = "pa-" + UUID.randomUUID() + "@example.com";
+        var team = call("POST", "/api/app/staff", first, Map.of("name", "Pat", "email", partnerEmail, "role", "owner"));
+        assertEquals(200, team.status(), team.raw());
+        String partner = auth0SignIn("auth0|" + UUID.randomUUID(), partnerEmail, true).cookie();
+        assertEquals("owner", call("GET", "/api/auth/me", partner, null).body().path("role").asText());
+
+        // The partner can change owner-only settings, and can demote the first owner while still an owner.
+        assertEquals(200, call("POST", "/api/app/locations", partner, Map.of("name", "Second")).status());
+        String firstId = null, partnerId = null;
+        for (var person : call("GET", "/api/app/staff", partner, null).body()) {
+            if (person.path("name").asText().equals("Owner")) firstId = person.path("id").asText();
+            if (person.path("name").asText().equals("Pat")) partnerId = person.path("id").asText();
+        }
+        assertEquals(200, call("PUT", "/api/app/staff/" + firstId, partner, Map.of("role", "staff")).status());
+        assertEquals("staff", call("GET", "/api/auth/me", first, null).body().path("role").asText());
+        // Now the only owner, the partner cannot step down or be removed.
+        assertEquals(400, call("PUT", "/api/app/staff/" + partnerId, partner, Map.of("role", "staff")).status());
+        assertEquals(400, call("POST", "/api/app/staff/" + partnerId + "/remove", partner, Map.of()).status());
+        assertEquals(403, call("PUT", "/api/app/staff/" + partnerId, first, Map.of("role", "staff")).status());
+
+        // Removing someone ends their access and hides them from the list; adding them again restores them.
+        assertEquals(200, call("POST", "/api/app/staff/" + firstId + "/remove", partner, Map.of()).status());
+        assertEquals(401, call("GET", "/api/app/trades", first, null).status());
+        assertEquals(1, call("GET", "/api/app/staff", partner, null).body().size());
+        assertEquals("/login", URI.create(auth0SignIn("auth0|" + UUID.randomUUID(), firstEmail, true).location()).getPath());
+        var back = call("POST", "/api/app/staff", partner, Map.of("name", "Owner", "email", firstEmail));
+        assertEquals(200, back.status(), back.raw());
+        assertEquals(2, back.body().size());
+        assertEquals(200, call("GET", "/api/app/trades", first, null).status());
+    }
+
+    @Test
     void signInIsKeyedOnAuth0SubWithVerifiedEmailAsTheFallback() throws Exception {
         String email = "k-" + UUID.randomUUID() + "@example.com";
         String sub = "auth0|" + UUID.randomUUID();
