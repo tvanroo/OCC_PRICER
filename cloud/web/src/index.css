@@ -65,4 +65,18 @@ label.inline input { width: auto; margin: 0; }
 fieldset { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 12px 16px; margin: 0; }
 .totals { display: grid; gap: 8px; }
 .totals div { display: flex; justify-content: space-between; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; }
+button.thumb { padding: 0; background: none; border-radius: 5px; flex: none; cursor: zoom-in; }
+button.thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lightbox { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: rgba(10, 10, 12, .95); color: #ececee; }
+.lb-toolbar { display: flex; gap: 6px; justify-content: center; padding: 10px 16px; flex-wrap: wrap; }
+.lb-toolbar button { background: rgba(255, 255, 255, .12); color: #fff; min-width: 44px; min-height: 40px; padding: .4rem .8rem; }
+.lb-toolbar button.on { background: #6ea2ff; color: #0b1830; }
+.lb-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 0 16px;
+  touch-action: none; user-select: none; }
+.lb-stage img { max-width: 100%; max-height: 100%; border-radius: 4.75% / 3.5%; cursor: zoom-in; transform-origin: center; }
+.lb-stage.zoomed img { cursor: grab; }
+.lb-stage.loupe-mode img { cursor: crosshair; }
+.loupe { position: fixed; pointer-events: none; border-radius: 50%; border: 2px solid #fff; background-color: #000;
+  background-repeat: no-repeat; box-shadow: 0 4px 18px rgba(0, 0, 0, .6); z-index: 101; }
+.lb-caption { margin: 0; padding: 10px 16px 14px; text-align: center; font-size: .9rem; color: #c8c8ce; }
 @media print { .topbar, .banner, .footer, button, .button { display: none; } }

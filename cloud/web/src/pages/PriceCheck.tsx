@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, FINISHES, money, type Card } from '../api'
+import CardLightbox from '../CardLightbox'
 
 interface SearchResult { cards: Card[]; pricesUpdatedAt: string | null }
 
@@ -8,6 +9,7 @@ export default function PriceCheck() {
   const [query, setQuery] = useState('')
   const [result, setResult] = useState<SearchResult | null>(null)
   const [error, setError] = useState('')
+  const [enlarged, setEnlarged] = useState<Card | null>(null)
 
   useEffect(() => {
     if (query.trim().length < 2) { setResult(null); setError(''); return }
@@ -32,7 +34,11 @@ export default function PriceCheck() {
           <div className="cards">
             {result.cards.map(card => (
               <article key={card.id} className="card">
-                {card.image ? <img src={card.image} alt="" loading="lazy" /> : <div className="noimg" />}
+                {card.image
+                  ? <button type="button" className="thumb" onClick={() => setEnlarged(card)} aria-label={`Enlarge ${card.name}`}>
+                      <img src={card.image} alt="" loading="lazy" />
+                    </button>
+                  : <div className="noimg" />}
                 <div>
                   <h3>{card.name}</h3>
                   <p className="muted">{card.setName} ({card.set}) #{card.number} · {card.rarity}</p>
@@ -47,6 +53,10 @@ export default function PriceCheck() {
           </div>
           {result.pricesUpdatedAt && <p className="muted small">Prices updated {new Date(result.pricesUpdatedAt).toLocaleString()}.</p>}
         </>
+      )}
+      {enlarged?.image && (
+        <CardLightbox image={enlarged.image} onClose={() => setEnlarged(null)}
+                      caption={`${enlarged.name} · ${enlarged.setName} (${enlarged.set}) #${enlarged.number}`} />
       )}
     </section>
   )
