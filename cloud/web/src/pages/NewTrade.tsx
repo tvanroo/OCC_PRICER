@@ -88,7 +88,7 @@ export default function NewTrade() {
         </div>
       )}
       <div className="picker">
-        <input className="search" placeholder="Add a card by name, set or number, e.g. DMU 391" value={query} onChange={e => setQuery(e.target.value)} />
+        <input className="search" placeholder="Add a card by name, set, number or card text, e.g. DMU 391" value={query} onChange={e => setQuery(e.target.value)} />
         {noMatch && query.trim().length >= 2 && <p className="muted">No cards found.</p>}
         {results.length > 0 && (
           <ul className="results">

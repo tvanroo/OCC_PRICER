@@ -39,13 +39,14 @@ public class CatalogImporter {
     private static final int BATCH = 1000;
     private static final String UPSERT = """
             INSERT INTO cards (id, name, set_code, set_name, collector_number, rarity, lang, released_at,
-                               usd, usd_foil, usd_etched, image_small, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+                               usd, usd_foil, usd_etched, image_small, type_line, oracle_text, flavor_text, artist, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, set_code = EXCLUDED.set_code,
                 set_name = EXCLUDED.set_name, collector_number = EXCLUDED.collector_number, rarity = EXCLUDED.rarity,
                 lang = EXCLUDED.lang, released_at = EXCLUDED.released_at, usd = EXCLUDED.usd,
                 usd_foil = EXCLUDED.usd_foil, usd_etched = EXCLUDED.usd_etched, image_small = EXCLUDED.image_small,
-                updated_at = now()""";
+                type_line = EXCLUDED.type_line, oracle_text = EXCLUDED.oracle_text, flavor_text = EXCLUDED.flavor_text,
+                artist = EXCLUDED.artist, updated_at = now()""";
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
@@ -148,7 +149,20 @@ public class CatalogImporter {
                 card.path("lang").asText("en"),
                 released == null ? null : Date.valueOf(LocalDate.parse(released)),
                 price(prices, "usd"), price(prices, "usd_foil"), price(prices, "usd_etched"),
-                image};
+                image,
+                text(card, "type_line"), text(card, "oracle_text"), text(card, "flavor_text"), text(card, "artist")};
+    }
+
+    /** A card field, or each face's value joined with " // " for double-faced and split cards. */
+    private static String text(JsonNode card, String field) {
+        String value = card.path(field).asText(null);
+        if (value != null) return value;
+        List<String> faces = new ArrayList<>();
+        for (JsonNode face : card.path("card_faces")) {
+            String part = face.path(field).asText(null);
+            if (part != null && !faces.contains(part)) faces.add(part);
+        }
+        return faces.isEmpty() ? null : String.join(" // ", faces);
     }
 
     private static BigDecimal price(JsonNode prices, String field) {

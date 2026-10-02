@@ -14,7 +14,7 @@ export default function PriceCheck() {
   useEffect(() => {
     if (query.trim().length < 2) { setResult(null); setError(''); return }
     const timer = setTimeout(() => {
-      api<SearchResult>(`/api/public/cards?q=${encodeURIComponent(query.trim())}`)
+      api<SearchResult>(`/api/public/cards?q=${encodeURIComponent(query.trim())}&v=${__BUILD_ID__}`)
         .then(r => { setResult(r); setError('') })
         .catch(e => setError(e.message))
     }, 300)
@@ -25,7 +25,7 @@ export default function PriceCheck() {
     <section>
       <h1>Magic card price check</h1>
       <p className="muted">Search any card to see today's market price.</p>
-      <input className="search" autoFocus placeholder="Card name, set or number, e.g. Lightning Bolt or DMU 391" value={query}
+      <input className="search" autoFocus placeholder="Card name, set, number or card text, e.g. Lightning Bolt or DMU 391" value={query}
              onChange={e => setQuery(e.target.value)} aria-label="Card name" />
       {error && <p className="error">{error}</p>}
       {result && (

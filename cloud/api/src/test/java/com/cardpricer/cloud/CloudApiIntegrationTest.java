@@ -226,6 +226,50 @@ class CloudApiIntegrationTest {
         assertEquals(0, call("GET", "/api/public/cards?q=cmm%20117", null, null).body().path("cards").size());
     }
 
+    private JsonNode search(String q) throws Exception {
+        return call("GET", "/api/public/cards?q=" + java.net.URLEncoder.encode(q, java.nio.charset.StandardCharsets.UTF_8), null, null)
+                .body().path("cards");
+    }
+
+    @Test
+    void searchIgnoresLeadingZerosOnCollectorNumbers() throws Exception {
+        // Cards print numbers zero-padded ("C 0116 / SPM"); the catalog stores them unpadded.
+        // Also the whole printed line (rarity letter, number, set, language) and an O typed for the zero.
+        for (String q : new String[]{"0410", "00410", "CMM 0410", "cmm #0410", "o410", "u 0410", "U 0410 / CMM \u2022 EN", "u o410"}) {
+            var cards = search(q);
+            assertEquals(1, cards.size(), q);
+            assertEquals("Sol Ring", cards.get(0).path("name").asText(), q);
+        }
+        assertEquals("220s", search("0220s").get(0).path("number").asText());
+        assertEquals(0, search("0117 cmm").size());
+        assertEquals(0, search("c 0410").size(), "Sol Ring is uncommon, not common");
+    }
+
+    @Test
+    void searchCoversSetNameAndCardText() throws Exception {
+        for (String q : new String[]{"commander masters", "artifact", "bierek", "add {c}{c}"}) {
+            var cards = search(q);
+            assertEquals(1, cards.size(), q);
+            assertEquals("Sol Ring", cards.get(0).path("name").asText(), q);
+        }
+        // Text on either face of a multi-face card counts.
+        assertEquals("Ragavan, Nimble Pilferer", search("dash").get(0).path("name").asText());
+        // A name match outranks a card that only mentions the word in its text.
+        var ring = search("ring");
+        assertEquals(2, ring.size());
+        assertEquals("Sol Ring", ring.get(0).path("name").asText());
+        assertEquals("Ragavan, Nimble Pilferer", ring.get(1).path("name").asText());
+    }
+
+    @Test
+    void searchToleratesTyposWhenNothingMatchesExactly() throws Exception {
+        var bolt = search("lightnig bolt");
+        assertEquals(2, bolt.size());
+        assertEquals("Lightning Bolt", bolt.get(0).path("name").asText());
+        assertEquals("Ragavan, Nimble Pilferer", search("ragavn").get(0).path("name").asText());
+        assertEquals(0, search("zzzz qqqq").size());
+    }
+
     @Test
     void storeWorkflowRequiresSignIn() throws Exception {
         assertEquals(401, call("GET", "/api/app/trades", null, null).status());
@@ -368,5 +412,20 @@ class CloudApiIntegrationTest {
                 .header("Cookie", owner).header("Content-Type", "text/plain")
                 .PUT(HttpRequest.BodyPublishers.ofString("{}")).build();
         assertEquals(415, http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
+    }
+
+    private String cacheControl(String path) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build();
+        var response = http.send(request, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode(), path);
+        return response.headers().firstValue("Cache-Control").orElse("");
+    }
+
+    @Test
+    void newReleasesAreNeverHiddenByTheBrowserCache() throws Exception {
+        // The page is always rechecked; the hashed bundles it points at are cached for good.
+        assertEquals("no-cache", cacheControl("/"));
+        assertEquals("no-cache", cacheControl("/app/trades"));
+        assertTrue(cacheControl("/assets/index-test.js").contains("immutable"));
     }
 }
