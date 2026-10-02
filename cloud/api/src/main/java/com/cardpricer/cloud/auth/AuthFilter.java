@@ -5,6 +5,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -16,7 +17,8 @@ import java.util.UUID;
 
 /**
  * Guards the paid store workflow under /api/app/**: requires a valid session and a store
- * whose subscription is active or still in trial. The free price check is never guarded.
+ * whose subscription is active or still in trial. /api/admin/** needs the platform owner instead.
+ * The free price check is never guarded.
  */
 @Component
 public class AuthFilter extends OncePerRequestFilter {
@@ -25,15 +27,17 @@ public class AuthFilter extends OncePerRequestFilter {
 
     private final SessionTokens tokens;
     private final JdbcTemplate jdbc;
+    private final String ownerEmail;
 
-    public AuthFilter(SessionTokens tokens, JdbcTemplate jdbc) {
+    public AuthFilter(SessionTokens tokens, JdbcTemplate jdbc, @Value("${app.owner-email:}") String ownerEmail) {
         this.tokens = tokens;
         this.jdbc = jdbc;
+        this.ownerEmail = ownerEmail.trim();
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/app/");
+        return !request.getRequestURI().startsWith("/api/app/") && !request.getRequestURI().startsWith("/api/admin/");
     }
 
     @Override
@@ -53,23 +57,31 @@ public class AuthFilter extends OncePerRequestFilter {
             return;
         }
         var rows = jdbc.query("""
-                SELECT u.id, u.tenant_id, u.role, u.name, u.email,
+                SELECT u.id, u.tenant_id, u.role, u.name, u.email, u.auth0_sub IS NOT NULL,
                        t.plan_status = 'active' OR (t.plan_status = 'trial' AND t.trial_ends_at > now()) AS entitled
                 FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ? AND u.removed_at IS NULL""",
                 (rs, i) -> new Object[]{
                         new CurrentUser(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3),
-                                rs.getString(4), rs.getString(5)),
-                        rs.getBoolean(6)},
+                                rs.getString(4), rs.getString(5),
+                                rs.getBoolean(6) && !ownerEmail.isEmpty() && ownerEmail.equalsIgnoreCase(rs.getString(5))),
+                        rs.getBoolean(7)},
                 userId.get());
         if (rows.isEmpty()) {
             reject(response, 401, "Please sign in");
             return;
         }
-        if (!(Boolean) rows.getFirst()[1]) {
+        CurrentUser user = (CurrentUser) rows.getFirst()[0];
+        if (request.getRequestURI().startsWith("/api/admin/")) {
+            // The platform admin works whatever the state of their own store's subscription.
+            if (!user.admin()) {
+                reject(response, 403, "Only the platform owner can do this");
+                return;
+            }
+        } else if (!(Boolean) rows.getFirst()[1]) {
             reject(response, 402, "Your store's subscription has ended");
             return;
         }
-        request.setAttribute(CurrentUser.ATTRIBUTE, rows.getFirst()[0]);
+        request.setAttribute(CurrentUser.ATTRIBUTE, user);
         chain.doFilter(request, response);
     }
 

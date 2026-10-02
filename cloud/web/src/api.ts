@@ -23,6 +23,8 @@ export interface Me {
   planStatus: string
   trialEndsAt: string
   entitled: boolean
+  /** Every store this login is on; `current` marks the one signed in now. */
+  stores: { tenantId: string; name: string; role: 'owner' | 'staff'; current: boolean }[]
 }
 
 export class ApiError extends Error {

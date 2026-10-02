@@ -10,6 +10,7 @@ import PriceCheck from './PriceCheck'
 import Rates from './Rates'
 import Staff from './Staff'
 import Store from './Store'
+import Admin from './Admin'
 
 export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => Promise<void> }) {
   const signOut = useSignOut(onSignOut)
@@ -25,6 +26,11 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
   }, [me.entitled, loadStore])
   const open = store?.locations.filter(l => !l.archived) ?? []
   const pickLocation = (id: string) => { setRegisterLocation(id); setLocationId(id) }
+  async function switchStore(tenantId: string) {
+    await api('/api/auth/switch', { method: 'POST', body: { tenantId } })
+    // Everything on screen belongs to the old store, so start the new one fresh.
+    window.location.assign('/app/trade')
+  }
   const trialDays = Math.max(0, Math.ceil((new Date(me.trialEndsAt).getTime() - Date.now()) / 86_400_000))
   return (
     <>
@@ -38,9 +44,15 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
           <NavLink to="/app/rates">Buy rates</NavLink>
           <NavLink to="/app/staff">Team</NavLink>
           <NavLink to="/app/store">Store</NavLink>
+          {me.admin && <NavLink to="/app/admin">Admin</NavLink>}
         </nav>
         <div className="who">
-          <strong>{me.store}</strong>
+          {me.stores.length > 1 ? (
+            <select className="register" aria-label="Store" value={me.stores.find(s => s.current)?.tenantId}
+              onChange={e => switchStore(e.target.value)}>
+              {me.stores.map(s => <option key={s.tenantId} value={s.tenantId}>{s.name}</option>)}
+            </select>
+          ) : <strong>{me.store}</strong>}
           {open.length > 1 && locationId && (
             <select className="register" aria-label="This register's location" title="Trades taken on this device go to this location"
               value={locationId} onChange={e => pickLocation(e.target.value)}>
@@ -52,8 +64,9 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
         </div>
       </header>
       {me.planStatus === 'trial' && me.entitled && <div className="banner">Free trial: {trialDays} days left.</div>}
-      <main className={pathname.startsWith('/app/trade') || pathname.startsWith('/app/history') || pathname.startsWith('/app/inventory') ? 'page wide' : 'page'}>
-        {!me.entitled ? (
+      <main className={pathname.startsWith('/app/trade') || pathname.startsWith('/app/history') || pathname.startsWith('/app/inventory') || pathname.startsWith('/app/admin') ? 'page wide' : 'page'}>
+        {pathname.startsWith('/app/admin') && me.admin ? <Admin onChange={onSignOut} />
+        : !me.entitled ? (
           <div className="panel"><h1>Your trial has ended</h1><p>Contact us to keep using trade-ins, history and exports. The free price check still works.</p></div>
         ) : (
           <Routes>

@@ -110,30 +110,39 @@ public class AuthController {
         }
         String email = identity.email().trim().toLowerCase(Locale.ROOT);
 
-        var bySub = jdbc.queryForList("SELECT id FROM users WHERE auth0_sub = ?", UUID.class, identity.sub());
-        UUID user = null;
-        if (!bySub.isEmpty()) {
-            user = bySub.getFirst();
-            try {
-                jdbc.update("UPDATE users SET email = ? WHERE id = ? AND email <> ?", email, user, email);
-            } catch (DuplicateKeyException ignored) {
-                // Another account already uses the new address; keep the old one.
-            }
-        } else {
-            var byEmail = jdbc.query("SELECT id, auth0_sub FROM users WHERE lower(email) = ?",
-                    (rs, i) -> Map.entry(rs.getObject(1, UUID.class), Optional.ofNullable(rs.getString(2))), email);
-            if (!byEmail.isEmpty()) {
-                if (byEmail.getFirst().getValue().isPresent()) {
-                    fail(response, "That email already signs in another way. Use the sign-in method you used before.");
-                    return;
-                }
-                user = byEmail.getFirst().getKey();
-                jdbc.update("UPDATE users SET auth0_sub = ? WHERE id = ? AND auth0_sub IS NULL", identity.sub(), user);
+        String sub = identity.sub();
+        Integer known = jdbc.queryForObject("SELECT count(*) FROM users WHERE auth0_sub = ?", Integer.class, sub);
+        if (known == null || known == 0) {
+            Integer linkedElsewhere = jdbc.queryForObject(
+                    "SELECT count(*) FROM users WHERE lower(email) = ? AND auth0_sub IS NOT NULL", Integer.class, email);
+            if (linkedElsewhere != null && linkedElsewhere > 0) {
+                fail(response, "That email already signs in another way. Use the sign-in method you used before.");
+                return;
             }
         }
-        if (user != null && jdbc.queryForObject("SELECT removed_at IS NOT NULL FROM users WHERE id = ?", Boolean.class, user)) {
-            fail(response, "You no longer have access to this store. Ask a store owner to add you again.");
-            return;
+        // Stores that added this verified email before the person ever signed in now recognise this login.
+        jdbc.update("""
+                UPDATE users SET auth0_sub = ? WHERE lower(email) = ? AND auth0_sub IS NULL
+                AND NOT EXISTS (SELECT 1 FROM users o WHERE o.tenant_id = users.tenant_id AND o.auth0_sub = ?)""", sub, email, sub);
+        for (UUID row : jdbc.queryForList("SELECT id FROM users WHERE auth0_sub = ? AND email <> ?", UUID.class, sub, email)) {
+            try {
+                jdbc.update("UPDATE users SET email = ? WHERE id = ?", email, row);
+            } catch (DuplicateKeyException ignored) {
+                // Someone else in that store already uses the new address; keep the old one there.
+            }
+        }
+        var memberships = jdbc.query("""
+                SELECT id, removed_at IS NULL FROM users WHERE auth0_sub = ?
+                ORDER BY removed_at IS NOT NULL, last_used_at DESC NULLS LAST, created_at""",
+                (rs, i) -> Map.entry(rs.getObject(1, UUID.class), rs.getBoolean(2)), sub);
+        UUID user = null;
+        if (!memberships.isEmpty()) {
+            if (!memberships.getFirst().getValue()) {
+                fail(response, "You no longer have access to this store. Ask a store owner to add you again.");
+                return;
+            }
+            user = memberships.getFirst().getKey();
+            jdbc.update("UPDATE users SET last_used_at = now() WHERE id = ?", user);
         }
         if (user == null) {
             String name = identity.name() == null || identity.name().equalsIgnoreCase(email) ? "" : identity.name().replace('\n', ' ');
@@ -186,6 +195,25 @@ public class AuthController {
         return Map.of("logoutUrl", auth0.configured() ? auth0.logoutUrl(url("/")) : "/");
     }
 
+    public record SwitchRequest(@jakarta.validation.constraints.NotNull UUID tenantId) {}
+
+    /** Signs the same person into their membership of another store. */
+    @PostMapping("/switch")
+    public Map<String, Object> switchStore(@Valid @RequestBody SwitchRequest body, HttpServletRequest request, HttpServletResponse response) {
+        // /api/auth is not behind AuthFilter, so refuse cross-site form posts here too.
+        if (request.getContentType() == null || !request.getContentType().startsWith("application/json"))
+            throw new ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Requests must be JSON");
+        UUID current = tokens.verify(AuthFilter.sessionCookie(request))
+                .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Please sign in"));
+        var target = jdbc.queryForList("""
+                SELECT o.id FROM users u JOIN users o ON o.auth0_sub = u.auth0_sub
+                WHERE u.id = ? AND u.removed_at IS NULL AND o.tenant_id = ? AND o.removed_at IS NULL""", UUID.class, current, body.tenantId());
+        if (target.isEmpty()) throw ApiException.forbidden("You are not on that store's team");
+        jdbc.update("UPDATE users SET last_used_at = now() WHERE id = ?", target.getFirst());
+        setCookie(response, AuthFilter.COOKIE, tokens.issue(target.getFirst()), SessionTokens.LIFETIME, "/");
+        return me(target.getFirst());
+    }
+
     /** Who is signed in, or 401. Works even when the trial has ended so the app can say so. */
     @GetMapping("/me")
     public Map<String, Object> current(HttpServletRequest request) {
@@ -201,11 +229,17 @@ public class AuthController {
                 FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ? AND u.removed_at IS NULL""", user);
         if (rows.isEmpty()) throw new ApiException(HttpStatus.UNAUTHORIZED, "Please sign in");
         var row = rows.getFirst();
-        return Map.of("name", row.get("name"), "email", row.get("email"), "role", row.get("role"),
+        var stores = jdbc.queryForList("""
+                SELECT o.tenant_id AS "tenantId", t.name, o.role, o.id = u.id AS current
+                FROM users u JOIN users o ON o.auth0_sub = u.auth0_sub JOIN tenants t ON t.id = o.tenant_id
+                WHERE u.id = ? AND o.removed_at IS NULL ORDER BY lower(t.name)""", user);
+        Map<String, Object> me = new HashMap<>(Map.of("name", row.get("name"), "email", row.get("email"), "role", row.get("role"),
                 "admin", isAdmin((String) row.get("email"), (Boolean) row.get("linked")),
                 "store", row.get("store"), "planStatus", row.get("plan_status"),
                 "trialEndsAt", ((Timestamp) row.get("trial_ends_at")).toInstant().toString(),
-                "entitled", row.get("entitled"));
+                "entitled", row.get("entitled")));
+        me.put("stores", stores);
+        return me;
     }
 
     /** Platform owner: the configured email, once Auth0 has verified it belongs to this user. */
