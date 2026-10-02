@@ -27,8 +27,8 @@ export default function Rates({ me }: { me: Me }) {
   return (
     <section>
       <h1>Buy rates</h1>
-      <p className="muted">A card's offer uses the row with the highest threshold below its value. Keep a $0 row for everything else.</p>
-      <table className="grid">
+      <p className="lede">A card's offer uses the row with the highest threshold below its value. Keep a $0 row for everything else.</p>
+      <div className="table-wrap"><table className="grid">
         <thead><tr><th>Card value over</th><th>Store credit %</th><th>Check %</th><th /></tr></thead>
         <tbody>
           {rules.map((r, i) => (
@@ -40,9 +40,9 @@ export default function Rates({ me }: { me: Me }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
       {owner ? (
-        <p><button className="secondary" onClick={() => setRules([...rules, { thresholdMin: '', creditRate: '50', checkRate: '40' }])}>Add tier</button>{' '}
+        <p className="actions"><button className="secondary" onClick={() => setRules([...rules, { thresholdMin: '', creditRate: '50', checkRate: '40' }])}>Add tier</button>{' '}
           <button onClick={save}>Save rates</button></p>
       ) : <p className="muted">Only the store owner can change rates.</p>}
       {message && <p className="notice">{message}</p>}
