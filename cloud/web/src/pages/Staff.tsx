@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react'
 import { api, type Me } from '../api'
+import { CardBoxPeople } from './CardBoxPeople'
 
 interface Member { id: string; name: string; email: string; role: 'owner' | 'staff'; joined: boolean }
 
 /** The people on the store. Owners add people, make them owners or staff, and remove them. */
 export default function Staff({ me, onChange }: { me: Me; onChange: () => Promise<void> }) {
+  if (me.cardbox) return <section><h1>Team</h1><CardBoxPeople me={me} onChange={onChange} /></section>
+  return <LocalStaff me={me} onChange={onChange} />
+}
+
+function LocalStaff({ me, onChange }: { me: Me; onChange: () => Promise<void> }) {
   const [staff, setStaff] = useState<Member[]>([])
   const [form, setForm] = useState({ name: '', email: '', role: 'staff' })
   const [error, setError] = useState('')

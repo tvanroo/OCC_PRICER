@@ -62,7 +62,9 @@ function StoreSettings({ me, store, onSaved }: { me: Me; store: StoreInfo; onSav
       <div className="settings">
         <form className="panel" onSubmit={saveProfile}>
           <h2>Details</h2>
-          {field('name', 'Store name', 'text', { required: true, maxLength: 120 })}
+          {field('name', 'Store name', 'text', { required: true, maxLength: 120,
+            // A CardBox store's name is shared with cardbox.club, so it changes there.
+            ...(me.cardbox ? { disabled: true, title: 'The store name is set on CardBox' } : {}) })}
           {field('website', 'Website', 'text', { placeholder: 'example.com', inputMode: 'url' })}
           {field('phone', 'Phone', 'tel', { inputMode: 'tel' })}
           {field('contactEmail', 'Contact email', 'email')}

@@ -100,6 +100,33 @@ auth0 apps show <client id> --reveal-secrets --json | jq -r .client_secret \
 If Universal Login later moves to a shared custom domain such as `login.cardbox.club`, set `auth0Domain` to it here
 and on cardbox.club, and signing in on one site signs you in on the other.
 
+### People, stores and roles from CardBox (switched off)
+
+cardbox.club holds the one copy of people, stores and role assignments (`platform_owner`, `store_manager`,
+`store_employee`), and both sites read and write it. Trading keeps only its own business data (plan, locations,
+inventory, rates, trades) for each CardBox store. This is built but off until CardBox confirms its side is live.
+It is the `cardboxEnabled` Bicep parameter (`CARDBOX_ENABLED`, default `false`); `CARDBOX_ENABLED=true cloud/deploy.sh`
+turns it on.
+
+With it on:
+
+- Login asks Auth0 for an access token for `https://cardbox.club/api` as well. The server keeps it, encrypted, in
+  `cardbox_tokens` (never in the browser) and calls CardBox with it as the signed-in person.
+- Each sign-in calls `POST /api/partner/sign-in` and copies the answer onto Trading's rows: `store_manager` becomes
+  owner and `store_employee` staff of the Trading store tied to that CardBox store (`tenants.cardbox_store_id`), and
+  roles CardBox no longer lists end here. A CardBox store seen for the first time is tied to the person's existing
+  Trading store of the same name, so its data carries over, or else gets a new Trading store in trial. A 403 means
+  no CardBox account, and someone with no store role can't sign in to the store app.
+- The Team and Admin tabs use `/api/cardbox/*`, which forwards only the contract's endpoints (account/roles, people,
+  stores, role-grants, role-catalog, role-events) to CardBox. CardBox's `detail` messages are shown as they are.
+- Trading's own team changes, store sign-up and store renames are refused (409). Plans and trials stay Trading's.
+- The platform owner is `OWNER_EMAIL` or anyone CardBox says is a `platform_owner`.
+- Trading never calls the Auth0 Management API or writes `app_metadata`; CardBox does that.
+
+Before switching it on, the Auth0 API `https://cardbox.club/api` must exist and allow the CardBox Trading application,
+and each Trading store with data should have a matching store on CardBox with its managers. After switching it on,
+the Admin tab lists any Trading store that didn't tie itself by name, to tie by hand.
+
 ### Domain
 
 `cardbox.trading` is registered at Cloudflare and its DNS is hosted there. Both `cardbox.trading` and

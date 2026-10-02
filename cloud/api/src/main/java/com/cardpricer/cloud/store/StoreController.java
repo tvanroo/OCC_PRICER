@@ -1,6 +1,7 @@
 package com.cardpricer.cloud.store;
 
 import com.cardpricer.cloud.auth.CurrentUser;
+import com.cardpricer.cloud.cardbox.CardBoxClient;
 import com.cardpricer.cloud.web.ApiException;
 import com.cardpricer.model.BuyRateRule;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -41,10 +44,32 @@ public class StoreController {
 
     private final RateRepository rates;
     private final JdbcTemplate jdbc;
+    private final CardBoxClient cardbox;
 
-    public StoreController(RateRepository rates, JdbcTemplate jdbc) {
+    public StoreController(RateRepository rates, JdbcTemplate jdbc, CardBoxClient cardbox) {
         this.rates = rates;
         this.jdbc = jdbc;
+        this.cardbox = cardbox;
+    }
+
+    /**
+     * Creates a store in trial with one location and default rates (50% credit, 40% check). With a CardBox store id,
+     * returns null if that store already has a row here.
+     */
+    public static UUID openStore(JdbcTemplate jdbc, String name, Instant trialEnds, String cardboxStoreId) {
+        UUID tenant = UUID.randomUUID();
+        if (jdbc.update("INSERT INTO tenants (id, name, trial_ends_at, cardbox_store_id) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                tenant, name.trim(), Timestamp.from(trialEnds), cardboxStoreId) == 0) return null;
+        jdbc.update("INSERT INTO locations (id, tenant_id, name) VALUES (?, ?, 'Main')", UUID.randomUUID(), tenant);
+        jdbc.update("INSERT INTO buy_rate_rules (tenant_id, threshold_min, credit_rate, check_rate) VALUES (?, ?, ?, ?)",
+                tenant, BigDecimal.ZERO, new BigDecimal("0.50"), new BigDecimal("0.40"));
+        return tenant;
+    }
+
+    /** With the CardBox link on, the team and the store's name are managed through CardBox. */
+    public static void refuseWhenCardBoxManaged(CardBoxClient cardbox) {
+        if (cardbox.enabled())
+            throw new ApiException(HttpStatus.CONFLICT, "People and roles are managed through CardBox now. Reload to see the new Team screen.");
     }
 
     /** The store profile and its locations; every member reads it so a register can pick its location. */
@@ -62,8 +87,9 @@ public class StoreController {
     @PutMapping("/store")
     public Map<String, Object> saveStore(@Valid @RequestBody ProfileBody body, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
-        jdbc.update("UPDATE tenants SET name = ?, website = ?, phone = ?, contact_email = ? WHERE id = ?",
-                body.name().trim(), website(body.website()), clean(body.phone()),
+        // A CardBox store's name is CardBox's; only the platform owner renames it there.
+        jdbc.update("UPDATE tenants SET name = CASE WHEN ? THEN name ELSE ? END, website = ?, phone = ?, contact_email = ? WHERE id = ?",
+                cardbox.enabled(), body.name().trim(), website(body.website()), clean(body.phone()),
                 clean(body.contactEmail()).toLowerCase(Locale.ROOT), user.tenantId());
         return store(request);
     }
@@ -143,6 +169,7 @@ public class StoreController {
      */
     @PostMapping("/staff")
     public List<Map<String, Object>> addStaff(@Valid @RequestBody StaffBody body, HttpServletRequest request) {
+        refuseWhenCardBoxManaged(cardbox);
         CurrentUser user = requireOwner(request);
         String role = body.role() == null ? "staff" : body.role();
         addMember(jdbc, user.tenantId(), body.name(), body.email(), role);
@@ -170,6 +197,7 @@ public class StoreController {
     @PutMapping("/staff/{id}")
     @Transactional
     public List<Map<String, Object>> setRole(@PathVariable UUID id, @Valid @RequestBody RoleBody body, HttpServletRequest request) {
+        refuseWhenCardBoxManaged(cardbox);
         CurrentUser user = requireOwner(request);
         if ("staff".equals(body.role())) keepAnOwner(jdbc, user.tenantId(), id);
         if (jdbc.update("UPDATE users SET role = ? WHERE id = ? AND tenant_id = ? AND removed_at IS NULL",
@@ -181,6 +209,7 @@ public class StoreController {
     @PostMapping("/staff/{id}/remove")
     @Transactional
     public List<Map<String, Object>> remove(@PathVariable UUID id, HttpServletRequest request) {
+        refuseWhenCardBoxManaged(cardbox);
         CurrentUser user = requireOwner(request);
         keepAnOwner(jdbc, user.tenantId(), id);
         if (jdbc.update("UPDATE users SET removed_at = now() WHERE id = ? AND tenant_id = ? AND removed_at IS NULL",

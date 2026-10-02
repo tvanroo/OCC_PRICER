@@ -24,6 +24,9 @@ param auth0Domain string = 'dev-tnnibhkgdbepzjy1.us.auth0.com'
 @description('Client id of the "CardBox Trading" Auth0 application. Its secret is the vault secret auth0-client-secret.')
 param auth0ClientId string = 'i8rRy5TlNKCvd4tMFWOqMkJRY1PhCPvq'
 
+@description('Use CardBox (cardbox.club) for people, stores and roles. Leave off until CardBox confirms its side is live.')
+param cardboxEnabled bool = false
+
 @description('Verified email of the platform owner.')
 param ownerEmail string = 'toby@vanroojen.com'
 
@@ -185,6 +188,7 @@ var webEnv = concat(env, [
   { name: 'AUTH0_CLIENT_ID', value: auth0ClientId }
   { name: 'AUTH0_CLIENT_SECRET', secretRef: 'auth0-client-secret' }
   { name: 'OWNER_EMAIL', value: ownerEmail }
+  { name: 'CARDBOX_ENABLED', value: string(cardboxEnabled) }
 ])
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
