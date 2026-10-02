@@ -55,7 +55,7 @@ public class AuthFilter extends OncePerRequestFilter {
         var rows = jdbc.query("""
                 SELECT u.id, u.tenant_id, u.role, u.name, u.email,
                        t.plan_status = 'active' OR (t.plan_status = 'trial' AND t.trial_ends_at > now()) AS entitled
-                FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ?""",
+                FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ? AND u.removed_at IS NULL""",
                 (rs, i) -> new Object[]{
                         new CurrentUser(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3),
                                 rs.getString(4), rs.getString(5)),

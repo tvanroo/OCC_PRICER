@@ -5,7 +5,9 @@ and the API; PostgreSQL holds the data.
 
 - **Free price check** at `/`: search a card and see its Scryfall market price. No account, as Scryfall's terms require.
 - **Store workflow** under `/app` (CardBox sign-in through Auth0, 30-day trial): trade entry with store credit, check or split payouts,
-  customers linked by phone number, trade history, tiered buy rates, staff accounts, and the 19-column receiving POS CSV.
+  customers linked by phone number, trade history, tiered buy rates, a store profile, several owners and staff per store,
+  multiple locations with every trade tagged to the location it was taken at, inventory per location kept in a storage
+  tree each store designs itself (store room, shelf, box, section, or any tiers it likes), and the 19-column receiving POS CSV.
 
 Pricing, condition multipliers, settlement and the POS CSV come from the desktop app's own classes
 (`SettlementEngine`, `PricingService`, `TradePosEncoder`, ...), compiled directly from `../src` (see `api/pom.xml`),

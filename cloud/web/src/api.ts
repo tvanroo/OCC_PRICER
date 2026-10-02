@@ -65,3 +65,28 @@ export const FINISHES = [
 ] as const
 
 export const CONDITIONS = ['NM', 'LP', 'MP', 'HP', 'DMG'] as const
+
+export interface StoreLocation { id: string; name: string; address: string; phone: string; archived: boolean }
+
+export interface StoreInfo {
+  name: string
+  website: string
+  phone: string
+  contactEmail: string
+  /** Open locations first, in the order they were added. */
+  locations: StoreLocation[]
+}
+
+const REGISTER_LOCATION = 'cardbox.registerLocation'
+
+/** The location this device takes trades at: the one picked here if it is still open, else the store's first open one. */
+export function registerLocation(store: StoreInfo | null): StoreLocation | null {
+  const open = store?.locations.filter(l => !l.archived) ?? []
+  let saved: string | null = null
+  try { saved = localStorage.getItem(REGISTER_LOCATION) } catch { /* private mode: fall back to the first location */ }
+  return open.find(l => l.id === saved) ?? open[0] ?? null
+}
+
+export function setRegisterLocation(id: string) {
+  try { localStorage.setItem(REGISTER_LOCATION, id) } catch { /* the choice lasts until reload */ }
+}

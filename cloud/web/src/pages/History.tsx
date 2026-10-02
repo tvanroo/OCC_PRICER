@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, money, phoneText } from '../api'
+import { api, money, phoneText, type StoreLocation } from '../api'
 
 interface TradeSummary {
   id: string; number: number; created_at: string; payment: string; credit_total: number; check_total: number
   market_total: number; customer_phone: string | null; customer_name: string | null; created_by: string; cards: number
+  location_id: string; location: string
 }
 
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString()
@@ -13,8 +14,10 @@ const when = (iso: string) => {
   return sameDay(d, new Date()) ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-export function History() {
+export function History({ locations }: { locations: StoreLocation[] }) {
   const [phone, setPhone] = useState('')
+  const [location, setLocation] = useState('')
+  const several = locations.length > 1
   const [trades, setTrades] = useState<TradeSummary[]>([])
   const [error, setError] = useState('')
   const navigate = useNavigate()
@@ -22,11 +25,14 @@ export function History() {
     const timer = setTimeout(() => {
       const digits = phone.replace(/\D/g, '')
       if (phone && digits.length < 8) return
-      api<TradeSummary[]>(`/api/app/trades${phone ? `?phone=${encodeURIComponent(phone)}` : ''}`)
+      const params = new URLSearchParams()
+      if (phone) params.set('phone', phone)
+      if (location) params.set('location', location)
+      api<TradeSummary[]>(`/api/app/trades${params.size ? `?${params}` : ''}`)
         .then(t => { setTrades(t); setError('') }).catch(e => setError(e.message))
     }, 300)
     return () => clearTimeout(timer)
-  }, [phone])
+  }, [phone, location])
 
   // The list holds the latest 50 trades, so today's totals are exact unless a store does more than 50 in a day.
   const today = trades.filter(t => sameDay(new Date(t.created_at), new Date()))
@@ -37,6 +43,12 @@ export function History() {
       <h1>Trade history</h1>
       <div className="toolbar">
         <input type="tel" inputMode="tel" placeholder="Filter by customer phone" aria-label="Filter by customer phone" value={phone} onChange={e => setPhone(e.target.value)} />
+        {several && (
+          <select aria-label="Filter by location" value={location} onChange={e => setLocation(e.target.value)}>
+            <option value="">All locations</option>
+            {locations.map(l => <option key={l.id} value={l.id}>{l.name}{l.archived ? ' (closed)' : ''}</option>)}
+          </select>
+        )}
       </div>
       {!phone && (
         <div className="stats">
@@ -48,7 +60,7 @@ export function History() {
       {error && <p className="error">{error}</p>}
       <div className="table-wrap">
         <table className="grid">
-          <thead><tr><th>#</th><th>When</th><th>Customer</th><th className="r">Cards</th><th className="r">Credit</th><th className="r">Check</th><th>By</th><th><span className="sr-only">POS export</span></th></tr></thead>
+          <thead><tr><th>#</th><th>When</th><th>Customer</th><th className="r">Cards</th><th className="r">Credit</th><th className="r">Check</th>{several && <th>Location</th>}<th>By</th><th><span className="sr-only">POS export</span></th></tr></thead>
           <tbody>
             {trades.map(t => (
               <tr key={t.id} className="clickable" onClick={() => navigate(`/app/history/${t.id}`)}>
@@ -58,6 +70,7 @@ export function History() {
                 <td className="r">{t.cards}</td>
                 <td className="r credit">{Number(t.credit_total) > 0 ? money(t.credit_total) : '—'}</td>
                 <td className="r">{Number(t.check_total) > 0 ? money(t.check_total) : '—'}</td>
+                {several && <td>{t.location}</td>}
                 <td>{t.created_by}</td>
                 <td><a href={`/api/app/trades/${t.id}/pos.csv`} onClick={e => e.stopPropagation()}>CSV</a></td>
               </tr>
@@ -87,7 +100,7 @@ export function TradeDetail() {
     <section style={{ maxWidth: 1040, margin: '0 auto' }}>
       <Link to="/app/history" className="back">← History</Link>
       <h1>Trade #{trade.number}</h1>
-      <p className="muted" style={{ marginTop: 0 }}>{new Date(trade.created_at).toLocaleString()} · by {trade.created_by}
+      <p className="muted" style={{ marginTop: 0 }}>{new Date(trade.created_at).toLocaleString()} · {trade.location} · by {trade.created_by}
         {trade.customer_phone && <> · {trade.customer_name || 'Customer'} <span className="num">{phoneText(trade.customer_phone)}</span></>}
         {trade.check_number && <> · check #{trade.check_number}</>}</p>
       <div className="table-wrap">
