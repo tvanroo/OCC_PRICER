@@ -118,6 +118,13 @@ public class CardBoxSignIn {
                 SELECT u.id FROM users u JOIN tenants t ON t.id = u.tenant_id
                 WHERE u.auth0_sub = ? AND u.removed_at IS NULL AND t.cardbox_store_id IS NOT NULL
                 ORDER BY u.last_used_at DESC NULLS LAST, u.created_at LIMIT 1""", UUID.class, sub);
+        if (last.isEmpty() && roles.platformOwner()) {
+            // A platform owner needs no store role on CardBox: they open a Trading store they're already on, even
+            // one not yet tied to CardBox, so they can reach the Admin tab and tie the stores up.
+            last = jdbc.queryForList("""
+                    SELECT id FROM users WHERE auth0_sub = ? AND removed_at IS NULL
+                    ORDER BY last_used_at DESC NULLS LAST, created_at LIMIT 1""", UUID.class, sub);
+        }
         if (last.isEmpty()) return Optional.empty();
         jdbc.update("UPDATE users SET last_used_at = now() WHERE id = ?", last.getFirst());
         return Optional.of(last.getFirst());

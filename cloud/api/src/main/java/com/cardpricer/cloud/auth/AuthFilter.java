@@ -66,7 +66,8 @@ public class AuthFilter extends OncePerRequestFilter {
                        t.plan_status = 'active' OR (t.plan_status = 'trial' AND t.trial_ends_at > now()) AS entitled,
                        coalesce(c.platform_owner, false), u.auth0_sub
                 FROM users u JOIN tenants t ON t.id = u.tenant_id LEFT JOIN cardbox_tokens c ON c.auth0_sub = u.auth0_sub
-                WHERE u.id = ? AND u.removed_at IS NULL AND (NOT ? OR t.cardbox_store_id IS NOT NULL)""",
+                WHERE u.id = ? AND u.removed_at IS NULL
+                AND (NOT ? OR t.cardbox_store_id IS NOT NULL OR coalesce(c.platform_owner, false))""",
                 (rs, i) -> new Object[]{
                         new CurrentUser(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3),
                                 rs.getString(4), rs.getString(5),

@@ -281,6 +281,31 @@ class CardBoxLinkIntegrationTest {
     }
 
     @Test
+    void aPlatformOwnerWithNoStoreRoleOpensTheirExistingTradingStore() throws Exception {
+        String sub = "auth0|" + UUID.randomUUID();
+        String email = "boss-" + UUID.randomUUID() + "@example.com";
+        UUID legacy = UUID.randomUUID();
+        jdbc.update("INSERT INTO tenants (id, name, trial_ends_at) VALUES (?, ?, ?)", legacy, "Untied " + legacy,
+                Timestamp.from(Instant.now().plusSeconds(86400)));
+        jdbc.update("INSERT INTO users (id, tenant_id, email, name, auth0_sub, role) VALUES (?, ?, ?, 'Boss', ?, 'owner')",
+                UUID.randomUUID(), legacy, email, sub);
+
+        var callback = signIn(sub, email, roles(Map.of("role", "platform_owner")));
+        assertEquals("/app", URI.create(callback.location()).getPath(), callback.location());
+        var me = call("GET", "/api/auth/me", callback.cookie(), null).body();
+        assertTrue(me.path("admin").asBoolean());
+        assertEquals("Untied " + legacy, me.path("store").asText());
+        assertEquals(200, call("GET", "/api/admin/stores", callback.cookie(), null).status());
+        assertEquals(200, call("GET", "/api/app/store", callback.cookie(), null).status());
+
+        // Someone who isn't a platform owner still can't use a store CardBox hasn't given them.
+        String other = "auth0|" + UUID.randomUUID();
+        jdbc.update("INSERT INTO users (id, tenant_id, email, name, auth0_sub, role) VALUES (?, ?, ?, 'Sam', ?, 'staff')",
+                UUID.randomUUID(), legacy, "sam-" + legacy + "@example.com", other);
+        assertEquals("/login", URI.create(signIn(other, "sam-" + legacy + "@example.com", roles()).location()).getPath());
+    }
+
+    @Test
     void cardBoxPlatformOwnersGetTheAdminTab() throws Exception {
         String store = "cb-" + UUID.randomUUID();
         var cookie = signIn("auth0|" + UUID.randomUUID(), "o-" + UUID.randomUUID() + "@example.com",
