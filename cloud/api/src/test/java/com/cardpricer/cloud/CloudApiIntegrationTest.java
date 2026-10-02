@@ -234,13 +234,15 @@ class CloudApiIntegrationTest {
     @Test
     void searchIgnoresLeadingZerosOnCollectorNumbers() throws Exception {
         // Cards print numbers zero-padded ("C 0116 / SPM"); the catalog stores them unpadded.
-        for (String q : new String[]{"0410", "00410", "CMM 0410", "cmm #0410"}) {
+        // Also the whole printed line (rarity letter, number, set, language) and an O typed for the zero.
+        for (String q : new String[]{"0410", "00410", "CMM 0410", "cmm #0410", "o410", "u 0410", "U 0410 / CMM \u2022 EN", "u o410"}) {
             var cards = search(q);
             assertEquals(1, cards.size(), q);
             assertEquals("Sol Ring", cards.get(0).path("name").asText(), q);
         }
         assertEquals("220s", search("0220s").get(0).path("number").asText());
         assertEquals(0, search("0117 cmm").size());
+        assertEquals(0, search("c 0410").size(), "Sol Ring is uncommon, not common");
     }
 
     @Test
