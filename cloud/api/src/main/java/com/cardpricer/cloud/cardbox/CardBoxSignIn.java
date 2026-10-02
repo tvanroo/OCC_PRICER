@@ -78,35 +78,25 @@ public class CardBoxSignIn {
     }
 
     /**
-     * Reads the roles answer. The expected shape is {@code {"roles": [{"role": "store_manager", "store": {"id", "name"}}]}};
-     * {@code store_id}/{@code store_name} on the role, a top-level {@code stores} list for names, and plain role
-     * strings for platform-wide roles are accepted too.
+     * Reads CardBox's roles answer (partner sign-in and account/roles):
+     * {@code {"roles": ["user", "platform_owner", ...], "stores": [{"id", "name", "slug", "role"}]}},
+     * with one {@code stores} entry per store role.
      */
     static Roles parse(JsonNode body) {
-        JsonNode list = body.isArray() ? body : body.path("roles");
-        Map<String, String> names = new HashMap<>();
-        for (JsonNode store : body.path("stores")) names.put(store.path("id").asText(), store.path("name").asText(""));
         boolean platformOwner = false;
+        for (JsonNode role : body.path("roles")) platformOwner |= "platform_owner".equals(role.asText());
         // A person who is both manager and employee of a store counts as its manager.
         Map<String, StoreRole> byStore = new LinkedHashMap<>();
-        for (JsonNode entry : list) {
-            String role = entry.isTextual() ? entry.asText() : entry.path("role").asText("");
-            if ("platform_owner".equals(role)) {
-                platformOwner = true;
-                continue;
-            }
-            String local = switch (role) {
+        for (JsonNode store : body.path("stores")) {
+            String local = switch (store.path("role").asText("")) {
                 case "store_manager" -> "owner";
                 case "store_employee" -> "staff";
                 default -> null;
             };
-            if (local == null) continue;
-            JsonNode store = entry.path("store");
-            String id = entry.hasNonNull("store_id") ? entry.get("store_id").asText() : store.path("id").asText("");
-            if (id.isEmpty()) continue;
-            String name = entry.hasNonNull("store_name") ? entry.get("store_name").asText() : store.path("name").asText(names.getOrDefault(id, ""));
+            String id = store.path("id").asText("");
+            if (local == null || id.isEmpty()) continue;
             StoreRole previous = byStore.get(id);
-            if (previous == null || "owner".equals(local)) byStore.put(id, new StoreRole(id, name, local));
+            if (previous == null || "owner".equals(local)) byStore.put(id, new StoreRole(id, store.path("name").asText(""), local));
         }
         return new Roles(true, platformOwner, List.copyOf(byStore.values()));
     }

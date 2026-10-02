@@ -102,7 +102,7 @@ class CardBoxLinkIntegrationTest {
                     }
                     case "GET /api/people" -> {
                         lastPeopleAuth = auth;
-                        send(ex, 200, "{\"people\":[{\"email\":\"someone@example.com\",\"roles\":[]}]}");
+                        send(ex, 200, "[{\"id\":\"u-1\",\"email\":\"someone@example.com\",\"display_name\":\"Someone\",\"roles\":[]}]");
                     }
                     case "POST /api/role-grants" -> {
                         JsonNode body = JSON.readTree(ex.getRequestBody());
@@ -189,14 +189,24 @@ class CardBoxLinkIntegrationTest {
         return call("GET", "/api/auth/callback?code=" + code + "&state=" + query(start.location(), "state"), start.cookie(), null);
     }
 
+    /** One entry of CardBox's {@code stores} list: a store role. */
     static Map<String, Object> storeRole(String role, String id, String name) {
-        return Map.of("role", role, "store", Map.of("id", id, "name", name, "slug", name.toLowerCase().replace(' ', '-')));
+        return Map.of("id", id, "name", name, "slug", name.toLowerCase().replace(' ', '-'), "role", role);
     }
 
+    /**
+     * CardBox's roles answer, as backend/cardbox/account_roles.py builds it: role names, then one {@code stores}
+     * entry per store role. {@code Map.of("role", "platform_owner")} adds a platform role.
+     */
     static Map<String, Object> roles(Object... entries) {
-        var list = new ArrayList<>(List.of((Object) Map.of("role", "user")));
-        list.addAll(List.of(entries));
-        return Map.of("roles", list);
+        var names = new LinkedHashSet<String>(List.of("user"));
+        var stores = new ArrayList<Object>();
+        for (Object entry : entries) {
+            @SuppressWarnings("unchecked") var map = (Map<String, Object>) entry;
+            names.add((String) map.get("role"));
+            if (map.containsKey("id")) stores.add(map);
+        }
+        return Map.of("account_id", UUID.randomUUID().toString(), "roles", List.copyOf(names), "stores", stores);
     }
 
     @Test
@@ -253,7 +263,7 @@ class CardBoxLinkIntegrationTest {
 
         var people = call("GET", "/api/cardbox/people", cookie, null);
         assertEquals(200, people.status(), people.raw());
-        assertEquals("someone@example.com", people.body().path("people").get(0).path("email").asText());
+        assertEquals("someone@example.com", people.body().get(0).path("email").asText());
         assertTrue(lastPeopleAuth.startsWith("Bearer at-"));
 
         var grant = call("POST", "/api/cardbox/role-grants", cookie, Map.of("email", "new@example.com", "role", "store_employee", "store_id", store));

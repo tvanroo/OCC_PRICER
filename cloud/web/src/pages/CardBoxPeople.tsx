@@ -9,32 +9,38 @@ import { api } from '../api'
 
 export type CardBoxRole = 'user' | 'platform_owner' | 'store_manager' | 'store_employee'
 export interface CardBoxStore { id: string; name: string; slug?: string }
-interface Grant { id?: string; role: CardBoxRole; store?: CardBoxStore | null; store_id?: string | null; removable?: boolean }
-interface Person { id?: string; email: string; name?: string | null; roles: Grant[] }
-interface CatalogRole { role: CardBoxRole; name?: string; label?: string; description?: string }
-interface RoleEvent { id?: string; at?: string; created_at?: string; summary?: string; description?: string; source?: string }
+/* Shapes as cardbox.club's backend/cardbox/account_roles.py returns them. */
+interface Grant { id: string; role: CardBoxRole; role_label?: string; store_id: string | null; store_name: string | null; removable: boolean; locked_reason?: string }
+interface Person { id: string; email: string; display_name: string; is_self?: boolean; roles: Grant[] }
+interface AccountRoles { roles: CardBoxRole[]; stores: (CardBoxStore & { role: CardBoxRole })[] }
+interface CatalogRole { role: CardBoxRole; label: string; description: string }
+interface RoleEvent { id: string; action: string; actor: string; target: string | null; role_label: string | null
+  store_name: string | null; detail: string; created_at: string }
 
 const LABELS: Record<CardBoxRole, string> = {
   user: 'User', platform_owner: 'Platform owner', store_manager: 'Store manager', store_employee: 'Store employee',
 }
 
-/** CardBox answers with either a bare list or an object holding one under {@code key}. */
-function list<T>(data: unknown, key: string): T[] {
-  if (Array.isArray(data)) return data as T[]
-  const inner = (data as Record<string, unknown> | null)?.[key]
-  return Array.isArray(inner) ? inner as T[] : []
+const EVENT_VERBS: Record<string, string> = {
+  role_granted: 'gave', role_removed: 'removed', store_created: 'created store', store_renamed: 'renamed store',
 }
 
-const storeId = (g: Grant) => g.store?.id ?? g.store_id ?? null
+/** One line of the shared audit log, e.g. "Toby gave Store employee to Sam at Pat's Cards". */
+function eventText(ev: RoleEvent) {
+  const verb = EVENT_VERBS[ev.action] ?? ev.action.replace(/_/g, ' ')
+  if (ev.action.startsWith('store_')) return `${ev.actor} ${verb} ${ev.store_name ?? ''}`
+  const what = [ev.role_label, ev.action === 'role_removed' ? 'from' : 'to', ev.target].filter(Boolean).join(' ')
+  return `${ev.actor} ${verb} ${what}${ev.store_name ? ` at ${ev.store_name}` : ''}`
+}
 
 /** What the signed-in person can do, from CardBox's live answer rather than what was true at sign-in. */
 function useCardBoxAccount() {
-  const [grants, setGrants] = useState<Grant[] | null>(null)
+  const [roles, setRoles] = useState<AccountRoles | null>(null)
   const [error, setError] = useState('')
-  useEffect(() => { api<unknown>('/api/cardbox/account/roles').then(r => setGrants(list<Grant>(r, 'roles'))).catch(e => setError(e.message)) }, [])
-  const platformOwner = grants?.some(g => g.role === 'platform_owner') ?? false
-  const managed = useMemo(() => new Set((grants ?? []).filter(g => g.role === 'store_manager').map(storeId).filter(Boolean) as string[]), [grants])
-  return { loaded: grants !== null, platformOwner, managed, error }
+  useEffect(() => { api<AccountRoles>('/api/cardbox/account/roles').then(setRoles).catch(e => setError(e.message)) }, [])
+  const platformOwner = roles?.roles.includes('platform_owner') ?? false
+  const managed = useMemo(() => new Set((roles?.stores ?? []).filter(s => s.role === 'store_manager').map(s => s.id)), [roles])
+  return { loaded: roles !== null, platformOwner, managed, error }
 }
 
 /** Everyone the signed-in person may see on CardBox, with the roles they may give and take away. */
@@ -50,21 +56,23 @@ export function CardBoxPeople({ me, onChange }: { me: { email: string }; onChang
   const [message, setMessage] = useState('')
 
   const load = useCallback(() => Promise.all([
-    api<unknown>('/api/cardbox/people').then(r => setPeople(list<Person>(r, 'people'))),
-    api<unknown>('/api/cardbox/role-events').then(r => setEvents(list<RoleEvent>(r, 'events'))).catch(() => setEvents([])),
+    api<Person[]>('/api/cardbox/people').then(setPeople),
+    api<RoleEvent[]>('/api/cardbox/role-events?limit=50').then(setEvents).catch(() => setEvents([])),
   ]), [])
   useEffect(() => {
     Promise.all([
       load(),
-      api<unknown>('/api/cardbox/stores').then(r => setStores(list<CardBoxStore>(r, 'stores'))),
-      api<unknown>('/api/cardbox/role-catalog').then(r => setCatalog(list<CatalogRole>(r, 'roles'))).catch(() => setCatalog([])),
+      api<CardBoxStore[]>('/api/cardbox/stores').then(setStores),
+      api<{ roles: CatalogRole[] }>('/api/cardbox/role-catalog').then(r => setCatalog(r.roles)).catch(() => setCatalog([])),
     ]).catch(e => setError(e.message))
   }, [load])
 
   // A platform owner gives any role anywhere; a store manager gives store employee at their own stores.
   const grantable: CardBoxRole[] = account.platformOwner ? ['store_employee', 'store_manager', 'platform_owner'] : account.managed.size ? ['store_employee'] : []
   const grantStores = account.platformOwner ? stores : stores.filter(s => account.managed.has(s.id))
-  const storeName = (g: Grant) => g.store?.name ?? stores.find(s => s.id === storeId(g))?.name ?? ''
+  const storeName = (g: Grant) => g.store_name ?? stores.find(s => s.id === g.store_id)?.name ?? ''
+  const nameOf = (p: Person) => p.display_name || p.email
+  const isSelf = (p: Person) => p.is_self ?? p.email.toLowerCase() === me.email.toLowerCase()
 
   async function run(request: Promise<unknown>, done: string, self = false) {
     try {
@@ -85,13 +93,12 @@ export function CardBoxPeople({ me, onChange }: { me: { email: string }; onChang
   }
   function revoke(p: Person, g: Grant) {
     const what = `${LABELS[g.role]}${storeName(g) ? ` at ${storeName(g)}` : ''}`
-    if (g.id && confirm(`Remove ${what} from ${p.name || p.email}?`))
-      run(api(`/api/cardbox/role-grants/${encodeURIComponent(g.id)}`, { method: 'DELETE' }), `${p.name || p.email} is no longer ${what.toLowerCase()}.`,
-        p.email.toLowerCase() === me.email.toLowerCase())
+    if (confirm(`Remove ${what} from ${nameOf(p)}?`))
+      run(api(`/api/cardbox/role-grants/${encodeURIComponent(g.id)}`, { method: 'DELETE' }), `${nameOf(p)} is no longer ${what.toLowerCase()}.`, isSelf(p))
   }
 
   const term = filter.trim().toLowerCase()
-  const shown = people.filter(p => !term || p.email.toLowerCase().includes(term) || (p.name ?? '').toLowerCase().includes(term)
+  const shown = people.filter(p => !term || p.email.toLowerCase().includes(term) || nameOf(p).toLowerCase().includes(term)
     || p.roles.some(g => storeName(g).toLowerCase().includes(term)))
 
   return (
@@ -107,15 +114,15 @@ export function CardBoxPeople({ me, onChange }: { me: { email: string }; onChang
       <div className="table-wrap"><table className="grid">
         <thead><tr><th>Person</th><th>Roles</th></tr></thead>
         <tbody>{shown.map(p => (
-          <tr key={p.id ?? p.email}>
-            <td>{p.name || p.email}{p.email.toLowerCase() === me.email.toLowerCase() && <span className="muted"> (you)</span>}
-              {p.name && <div className="muted small">{p.email}</div>}</td>
-            <td>{p.roles.filter(g => g.role !== 'user').map(g => (
-              <span key={g.id ?? `${g.role}-${storeId(g)}`} className="chip">
-                {LABELS[g.role] ?? g.role}{storeName(g) && <> · {storeName(g)}</>}
-                {g.removable && g.id && <button className="link" aria-label={`Remove ${LABELS[g.role]} from ${p.name || p.email}`} onClick={() => revoke(p, g)}>×</button>}
+          <tr key={p.id}>
+            <td>{nameOf(p)}{isSelf(p) && <span className="muted"> (you)</span>}
+              {nameOf(p) !== p.email && <div className="muted small">{p.email}</div>}</td>
+            <td>{p.roles.map(g => (
+              <span key={g.id} className="chip" title={g.locked_reason}>
+                {g.role_label ?? LABELS[g.role] ?? g.role}{storeName(g) && <> · {storeName(g)}</>}
+                {g.removable && <button className="link" aria-label={`Remove ${g.role_label ?? LABELS[g.role]} from ${nameOf(p)}`} onClick={() => revoke(p, g)}>×</button>}
               </span>
-            ))}{p.roles.every(g => g.role === 'user') && <span className="muted">User</span>}</td>
+            ))}{p.roles.length === 0 && <span className="muted">User</span>}</td>
           </tr>
         ))}</tbody>
       </table></div>
@@ -145,15 +152,15 @@ export function CardBoxPeople({ me, onChange }: { me: { email: string }; onChang
       {catalog.length > 0 && (
         <details style={{ marginTop: 20 }}>
           <summary>What each role can do</summary>
-          <dl>{catalog.map(c => <div key={c.role}><dt><strong>{c.name ?? c.label ?? LABELS[c.role] ?? c.role}</strong></dt><dd className="muted">{c.description}</dd></div>)}</dl>
+          <dl>{catalog.map(c => <div key={c.role}><dt><strong>{c.label ?? LABELS[c.role] ?? c.role}</strong></dt><dd className="muted">{c.description}</dd></div>)}</dl>
         </details>
       )}
       {events.length > 0 && (
         <details style={{ marginTop: 12 }}>
           <summary>Recent changes</summary>
           <ul className="plain">{events.slice(0, 30).map((ev, i) => (
-            <li key={ev.id ?? i}><span className="muted small">{new Date(ev.at ?? ev.created_at ?? '').toLocaleString()}</span> {ev.summary ?? ev.description}
-              {ev.source && <span className="muted small"> {ev.source}</span>}</li>
+            <li key={ev.id ?? i}><span className="muted small">{new Date(ev.created_at).toLocaleString()}</span> {eventText(ev)}
+              {ev.detail && <span className="muted small"> · {ev.detail}</span>}</li>
           ))}</ul>
         </details>
       )}
@@ -177,7 +184,7 @@ export function CardBoxStores() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const load = useCallback(() => Promise.all([
-    api<unknown>('/api/cardbox/stores').then(r => setStores(list<CardBoxStore>(r, 'stores'))),
+    api<CardBoxStore[]>('/api/cardbox/stores').then(setStores),
     api<TradingStore[]>('/api/admin/stores').then(setTrading),
   ]), [])
   useEffect(() => { load().catch(e => setError(e.message)) }, [load])
