@@ -2,6 +2,7 @@ package com.cardpricer.cloud.trade;
 
 import com.cardpricer.cloud.catalog.CardRow;
 import com.cardpricer.cloud.catalog.CatalogRepository;
+import com.cardpricer.cloud.inventory.InventoryRepository;
 import com.cardpricer.cloud.store.RateRepository;
 import com.cardpricer.cloud.web.ApiException;
 import com.cardpricer.model.BuyRateRule;
@@ -51,13 +52,15 @@ public class TradeService {
     private final CatalogRepository catalog;
     private final RateRepository rates;
     private final JdbcTemplate jdbc;
+    private final InventoryRepository inventory;
     private final PricingService pricing = new PricingService();
     private final SettlementEngine engine = new SettlementEngine();
 
-    public TradeService(CatalogRepository catalog, RateRepository rates, JdbcTemplate jdbc) {
+    public TradeService(CatalogRepository catalog, RateRepository rates, JdbcTemplate jdbc, InventoryRepository inventory) {
         this.catalog = catalog;
         this.rates = rates;
         this.jdbc = jdbc;
+        this.inventory = inventory;
     }
 
     /**
@@ -145,6 +148,11 @@ public class TradeService {
                 INSERT INTO trade_lines (trade_id, line_no, tenant_id, card_id, name, set_code, collector_number, rarity,
                     lang, finish, condition, quantity, market_unit, valuation_unit, credit_rate, check_rate,
                     credit_alloc, check_alloc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", rows);
+        // The cards bought in go into stock at the trade's location, waiting to be put away.
+        for (PricedLine l : quote.lines()) {
+            inventory.add(tenant, location, null, new InventoryRepository.Stock(l.cardId(), l.name(), l.setCode(),
+                    l.collectorNumber(), l.rarity(), l.lang(), l.finish(), l.condition(), l.quantity()));
+        }
         return id;
     }
 

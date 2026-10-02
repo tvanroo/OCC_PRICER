@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api, type Me, type StoreInfo, type StoreLocation } from '../api'
+import StorageEditor from './StorageEditor'
 
 type LocationForm = { name: string; address: string; phone: string }
 const blank: LocationForm = { name: '', address: '', phone: '' }
@@ -102,6 +103,7 @@ function StoreSettings({ me, store, onSaved }: { me: Me; store: StoreInfo; onSav
           )}
         </div>
       </div>
+      <StorageEditor owner={owner} locations={store.locations} />
     </section>
   )
 }

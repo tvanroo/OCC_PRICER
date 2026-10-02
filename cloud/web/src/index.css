@@ -270,7 +270,34 @@ button.thumb { min-height: 0; padding: 0; background: none; border: 0; border-ra
 .location-list { list-style: none; margin: .75rem 0 1rem; padding: 0; border-top: 1px solid var(--line-soft); }
 .location-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
 .location-list li.archived strong { color: var(--muted); }
-.location-list .row-actions { display: flex; gap: 16px; flex: none; }
+.row-actions { display: flex; gap: 16px; flex: none; }
 .location-form { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .grid select { min-height: 36px; }
 .topbar select.register { min-height: 36px; padding: 0 .5rem; background: #17222c; color: var(--chrome-text); border-color: #384553; }
+.panel.storage { margin-top: 20px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.spot-tree { list-style: none; margin: .75rem 0 1rem; padding: 0; }
+.spot-tree li { border-bottom: 1px solid var(--line-soft); }
+.spot-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.spot-row strong { font-weight: 650; }
+.spot-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; gap: 0 12px; align-items: end; padding: 4px 0 12px; }
+.spot-form .actions { margin: 0 0 .6rem; }
+.spot-form .hint { display: block; margin-top: .3rem; font-weight: 400; }
+@media (max-width: 760px) { .spot-form { grid-template-columns: 1fr; } }
+
+/* Inventory */
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.toolbar select { min-height: 52px; }
+.grid.inventory .stepper { justify-content: flex-end; }
+.move-row td { background: var(--surface-2); }
+.move-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.move-form label { margin: 0; }
+.move-form input { width: 6rem; }
+.add-cards { margin-bottom: 16px; }
+.pick-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
+.pick-list button { width: 100%; justify-content: flex-start; gap: 12px; min-height: var(--tap); text-align: left; }
+.pick-list .price { margin-left: auto; font-variant-numeric: tabular-nums; }
+.add-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 14px; }
+.add-form label { margin: 0; }
+.add-form input { width: 6rem; }
+.add-form .picked { flex-basis: 100%; font-size: 1.1rem; }

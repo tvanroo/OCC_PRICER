@@ -5,6 +5,7 @@ import { useSignOut } from '../App'
 import { Mark, Wordmark } from '../Brand'
 import NewTrade from './NewTrade'
 import { History, TradeDetail } from './History'
+import Inventory from './Inventory'
 import PriceCheck from './PriceCheck'
 import Rates from './Rates'
 import Staff from './Staff'
@@ -33,6 +34,7 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
           <NavLink to="/app/trade">New trade</NavLink>
           <NavLink to="/app/price">Price check</NavLink>
           <NavLink to="/app/history">History</NavLink>
+          <NavLink to="/app/inventory">Inventory</NavLink>
           <NavLink to="/app/rates">Buy rates</NavLink>
           <NavLink to="/app/staff">Team</NavLink>
           <NavLink to="/app/store">Store</NavLink>
@@ -50,7 +52,7 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
         </div>
       </header>
       {me.planStatus === 'trial' && me.entitled && <div className="banner">Free trial: {trialDays} days left.</div>}
-      <main className={pathname.startsWith('/app/trade') || pathname.startsWith('/app/history') ? 'page wide' : 'page'}>
+      <main className={pathname.startsWith('/app/trade') || pathname.startsWith('/app/history') || pathname.startsWith('/app/inventory') ? 'page wide' : 'page'}>
         {!me.entitled ? (
           <div className="panel"><h1>Your trial has ended</h1><p>Contact us to keep using trade-ins, history and exports. The free price check still works.</p></div>
         ) : (
@@ -59,6 +61,7 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
             <Route path="price" element={<PriceCheck />} />
             <Route path="history" element={<History locations={store?.locations ?? []} />} />
             <Route path="history/:id" element={<TradeDetail />} />
+            <Route path="inventory" element={store ? <Inventory locations={store.locations} registerLocationId={locationId} /> : <p className="muted">Loading…</p>} />
             <Route path="rates" element={<Rates me={me} />} />
             <Route path="staff" element={<Staff me={me} onChange={onSignOut} />} />
             <Route path="store" element={<Store me={me} store={store} onSaved={info => { loadStore(info); onSignOut() }} />} />

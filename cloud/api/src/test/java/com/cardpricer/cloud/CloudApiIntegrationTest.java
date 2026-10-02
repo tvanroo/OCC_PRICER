@@ -420,6 +420,70 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void inventoryLivesInACustomStorageTree() throws Exception {
+        String owner = signup("Stock Shop", "inv-" + UUID.randomUUID() + "@example.com");
+        String main = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+        String bolt = "11111111-1111-1111-1111-111111111111";
+
+        // A trade's cards land in stock at its location, not put away yet; a second trade merges into the same line.
+        var lines = java.util.List.of(Map.of("cardId", bolt, "finish", "foil", "condition", "LP", "quantity", 3));
+        call("POST", "/api/app/trades", owner, Map.of("payment", "credit", "lines", lines));
+        call("POST", "/api/app/trades", owner, Map.of("payment", "credit", "lines", lines));
+        var stock = call("GET", "/api/app/inventory?location=" + main + "&storage=none", owner, null);
+        assertEquals(200, stock.status(), stock.raw());
+        assertEquals(1, stock.body().path("items").size());
+        assertEquals(6, stock.body().path("items").get(0).path("quantity").asInt());
+        assertEquals("Lightning Bolt", stock.body().path("items").get(0).path("name").asText());
+
+        // The store designs its own tiers: a room, shelves A-B in it, boxes on shelf A.
+        var tree = call("POST", "/api/app/storage", owner, Map.of("locationId", main, "label", "Store room", "names", java.util.List.of("Back")));
+        assertEquals(200, tree.status(), tree.raw());
+        String back = tree.body().get(0).path("id").asText();
+        tree = call("POST", "/api/app/storage", owner, Map.of("locationId", main, "parentId", back, "label", "Shelf", "names", java.util.List.of("A", "B")));
+        String shelfA = null;
+        for (var spot : tree.body()) if (spot.path("name").asText().equals("A")) shelfA = spot.path("id").asText();
+        tree = call("POST", "/api/app/storage", owner, Map.of("locationId", main, "parentId", shelfA, "label", "Box", "names", java.util.List.of("1", "2")));
+        assertEquals(5, tree.body().size());
+        String box1 = null;
+        for (var spot : tree.body()) if (spot.path("name").asText().equals("1")) box1 = spot.path("id").asText();
+        assertEquals(409, call("POST", "/api/app/storage", owner, Map.of("locationId", main, "parentId", back, "label", "shelf", "names", java.util.List.of("a"))).status());
+
+        // Put four away in box 1, leave two unsorted. Searching the room finds what's in the box under it.
+        String item = stock.body().path("items").get(0).path("id").asText();
+        assertEquals(200, call("POST", "/api/app/inventory/" + item + "/move", owner, Map.of("storageId", box1, "quantity", 4)).status());
+        var inRoom = call("GET", "/api/app/inventory?storage=" + back, owner, null).body();
+        assertEquals(1, inRoom.path("items").size());
+        assertEquals(4, inRoom.path("items").get(0).path("quantity").asInt());
+        assertEquals("Shelf", inRoom.path("items").get(0).path("path").get(1).path("label").asText());
+        assertEquals("1", inRoom.path("items").get(0).path("path").get(2).path("name").asText());
+        assertEquals(2, call("GET", "/api/app/inventory?storage=none", owner, null).body().path("items").get(0).path("quantity").asInt());
+        assertEquals(6, call("GET", "/api/app/inventory?q=bolt", owner, null).body().path("cards").asInt());
+
+        // Staff count and move stock but can't change the layout.
+        String staffEmail = "is-" + UUID.randomUUID() + "@example.com";
+        call("POST", "/api/app/staff", owner, Map.of("name", "Sam", "email", staffEmail));
+        String staff = auth0SignIn("auth0|" + UUID.randomUUID(), staffEmail, true).cookie();
+        assertEquals(403, call("POST", "/api/app/storage", staff, Map.of("locationId", main, "label", "Case", "names", java.util.List.of("1"))).status());
+        assertEquals(200, call("POST", "/api/app/inventory", staff, Map.of("cardId", bolt, "finish", "normal", "condition", "NM",
+                "quantity", 2, "locationId", main, "storageId", box1)).status());
+        String boxed = call("GET", "/api/app/inventory?storage=" + box1 + "&q=bolt", staff, null).body().path("items").get(0).path("id").asText();
+        assertEquals(200, call("PUT", "/api/app/inventory/" + boxed, staff, Map.of("quantity", 0)).status());
+
+        // Removing a box with cards in it moves them up to the shelf; a shelf with boxes can't be removed.
+        assertEquals(400, call("POST", "/api/app/storage/" + shelfA + "/remove", owner, Map.of()).status());
+        assertEquals(200, call("POST", "/api/app/storage/" + box1 + "/remove", owner, Map.of()).status());
+        var onShelf = call("GET", "/api/app/inventory?storage=" + shelfA, owner, null).body().path("items");
+        assertEquals(1, onShelf.size());
+        assertEquals(2, onShelf.get(0).path("path").size());
+
+        // Other stores see none of it.
+        String other = signup("Other Stock", "io-" + UUID.randomUUID() + "@example.com");
+        assertEquals(0, call("GET", "/api/app/inventory", other, null).body().path("items").size());
+        assertEquals(404, call("PUT", "/api/app/inventory/" + item, other, Map.of("quantity", 1)).status());
+        assertEquals(400, call("POST", "/api/app/inventory", other, Map.of("cardId", bolt, "quantity", 1, "locationId", main)).status());
+    }
+
+    @Test
     void storesCanHaveSeveralOwners() throws Exception {
         String firstEmail = "f-" + UUID.randomUUID() + "@example.com";
         String first = signup("Partners", firstEmail);
